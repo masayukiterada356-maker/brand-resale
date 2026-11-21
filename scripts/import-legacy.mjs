@@ -50,6 +50,9 @@ export function convert(text) {
     if (!c['管理番号']) problems.push(`${row}行目：管理番号が空欄のため「${mgmt}」にしました`);
 
     const memo = [c['メモ']];
+    // 撮影代の列に入っているインボイス登録番号（ヤフオク仕入れ）は、インボイスの欄に移す
+    let invoice = null;
+    if (/^T\d{13}$/.test(c['撮影代'])) { invoice = c['撮影代']; c['撮影代'] = ''; }
     const num = (h) => {
       const y = toYen(c[h]);
       if (y.raw) { memo.push(`${h}：${y.raw}`); problems.push(`${row}行目（${mgmt}）：${h}「${y.raw}」は数字ではないので空にしました`); }
@@ -76,6 +79,7 @@ export function convert(text) {
       target: num('目安価格'),
       start: num('スタート価格'),
       status: c['売上日'] ? 'sold' : listed ? 'listed' : 'in_stock',
+      invoice,
       sale: null,
     };
     if (!purchase) problems.push(`${row}行目（${mgmt}）：仕入れ日が空欄・読めないため 2000-01-01 にしました`);
@@ -101,9 +105,9 @@ const q = (v) => (v === null || v === undefined ? 'NULL' : typeof v === 'number'
 export function toSql(items) {
   const out = ['-- 今までの管理表から移したデータ（自動で作ったファイル）'];
   for (const it of items) {
-    out.push(`INSERT INTO items (mgmt_no, supplier_code, supplier_ref, purchase_date, listed_date, sold_date, brand, name, rank, cost, status, channel, target_price, start_price, memo, legacy_row) VALUES (${[
+    out.push(`INSERT INTO items (mgmt_no, supplier_code, supplier_ref, purchase_date, listed_date, sold_date, brand, name, rank, cost, status, channel, target_price, start_price, memo, legacy_row, invoice_no, invoice_status) VALUES (${[
       it.mgmt, it.supplier, `管理表${it.row}行`, it.purchase, it.listed, it.sold, it.brand, it.name, it.rank, it.cost, it.status,
-      it.channel, it.target, it.start, it.memo, it.row].map(q).join(', ')});`);
+      it.channel, it.target, it.start, it.memo, it.row, it.invoice, it.invoice ? 'registered' : null].map(q).join(', ')});`);
     if (it.sale) {
       const s = it.sale;
       out.push(`INSERT INTO sales (item_id, platform, sold_date, price, shipping, payout, packing, photo_fee, extra_shipping, repair, profit, days, likes, views) VALUES ((SELECT id FROM items WHERE mgmt_no = ${q(it.mgmt)}), ${[

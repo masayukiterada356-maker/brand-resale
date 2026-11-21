@@ -115,7 +115,7 @@ async function listItems(url, env) {
   }
   const sql = `SELECT i.id, i.mgmt_no, i.supplier_code, s.name AS supplier_name, i.purchase_date,
       i.brand, i.category, i.name, i.model, i.rank, i.cost, i.status, i.supplier_images_json,
-      i.thumb_version, i.channel, i.listed_date, sa.sold_date, sa.price AS sold_price, sa.profit, sa.platform AS sold_platform,
+      i.thumb_version, i.channel, i.invoice_status, i.listed_date, sa.sold_date, sa.price AS sold_price, sa.profit, sa.platform AS sold_platform,
       (SELECT CASE WHEN l.ready = 1 THEN 'ready' ELSE 'draft' END FROM listings l WHERE l.item_id = i.id) AS listing_state,
       COALESCE(i.thumb_photo_id, (SELECT p.drive_id FROM photos p WHERE p.item_id = i.id ORDER BY p.folder_id, p.position LIMIT 1)) AS photo_id,
       CAST(COALESCE(julianday(sa.sold_date), julianday('now', '+9 hours')) - julianday(i.purchase_date) AS INTEGER) AS days
@@ -137,6 +137,24 @@ async function listItems(url, env) {
       SUM(status = 'listed') AS listed, SUM(status = 'sold') AS sold
     FROM items`).first();
   return json({ items, totals });
+}
+
+// 仕入れ先のインボイス情報を保存する
+export function checkInvoice(b) {
+  const status = ['registered', 'none', ''].includes(b.invoice_status) ? b.invoice_status : null;
+  if (status === null) return { error: 'インボイスの区分が正しくありません' };
+  const no = String(b.invoice_no || '').normalize('NFKC').replace(/[\s-]/g, '').toUpperCase();
+  if (status === 'registered' && !/^T\d{13}$/.test(no)) return { error: '登録番号は「T」と数字13ケタです（例：T1234567890123）' };
+  return { status, no: status === 'registered' ? no : null, seller: String(b.seller_name || '').trim().slice(0, 100) || null };
+}
+
+async function saveInvoice(id, req, env) {
+  const b = await req.json().catch(() => ({}));
+  const v = checkInvoice(b);
+  if (v.error) return fail(v.error);
+  await env.DB.prepare(`UPDATE items SET seller_name = ?, invoice_no = ?, invoice_status = ?, updated_at = datetime('now') WHERE id = ?`)
+    .bind(v.seller, v.no, v.status || null, id).run();
+  return json({ ok: true, seller_name: v.seller, invoice_no: v.no, invoice_status: v.status || null });
 }
 
 async function getItem(id, env) {
@@ -177,6 +195,8 @@ export default {
         if (m === 'GET' && pathname === '/api/items') return await listItems(url, env);
         const im = /^\/api\/items\/(\d+)$/.exec(pathname);
         if (m === 'GET' && im) return await getItem(Number(im[1]), env);
+        const vm = /^\/api\/items\/(\d+)\/invoice$/.exec(pathname);
+        if (m === 'PUT' && vm) return await saveInvoice(Number(vm[1]), req, env);
         const tm = /^\/api\/items\/(\d+)\/thumb$/.exec(pathname);
         if (m === 'POST' && tm) return await saveThumb(Number(tm[1]), req, env);
         if (m === 'GET' && tm) return await getThumb(Number(tm[1]), url, env);

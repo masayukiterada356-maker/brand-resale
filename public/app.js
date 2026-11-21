@@ -95,7 +95,8 @@ async function loadList() {
           <div class="days">${esc((it.sold_date || '').slice(2).replace(/-/g, '/'))}・${it.days}日</div>` : `
           <div class="yen">${yen(it.cost)}</div>
           <div class="days">${it.days}日目</div>
-          ${it.status === 'listed' ? `<span class="chip ok">出品中${it.channel ? '・' + esc(it.channel) : ''}</span>` : ''}`}
+          ${it.status === 'listed' ? `<span class="chip ok">出品中${it.channel ? '・' + esc(it.channel) : ''}</span>` : ''}
+          ${it.supplier_code === 'Y' && !it.invoice_status ? '<span class="chip conflict">インボイス未入力</span>' : ''}`}
           ${it.listing_state === 'ready' ? '<span class="chip ok">出品文OK</span>' : it.listing_state === 'draft' ? '<span class="chip duplicate">文を確認</span>' : ''}
         </div>
       </a>`).join('');
@@ -172,6 +173,7 @@ async function viewItem(id) {
           <dt>仕入れ値（税込）</dt><dd>${yen(it.cost)}</dd>
         </dl>
       </div>
+      <div class="card ${it.supplier_code === 'Y' && !it.invoice_status ? 'need' : ''}" id="invoice-card"></div>
       <div class="card">
         <h2>商品の情報</h2>
         <dl class="kv">
@@ -187,6 +189,7 @@ async function viewItem(id) {
       $view.querySelectorAll('.pick-btn').forEach((x) => x.classList.toggle('on', x === b));
       await setThumb(it.id, b.dataset.photo, true);
     }));
+    renderInvoice(it);
     loadListing(it);
     // 写真はあるのにサムネイルがまだない時は、1枚目で作る
     if (it.photos.length && !it.thumb_version) await setThumb(it.id, it.photos[0].drive_id, false);
@@ -369,6 +372,43 @@ async function runCommit() {
 }
 
 
+/* ---------- 仕入れ先のインボイス ---------- */
+function renderInvoice(it) {
+  const $c = document.getElementById('invoice-card');
+  if (!$c) return;
+  const st = it.invoice_status || '';
+  const label = st === 'registered' ? `登録番号 ${esc(it.invoice_no)}` : st === 'none' ? '登録のない相手（適格請求書なし）' : '未確認';
+  $c.innerHTML = `
+    <div class="lhead"><h2>仕入れ先のインボイス</h2>
+      <span class="chip ${st ? 'ok' : it.supplier_code === 'Y' ? 'conflict' : 'skipped'}">${st ? '記録済み' : '未入力'}</span></div>
+    ${it.supplier_code === 'Y' && !st ? '<p class="note" style="margin-top:0">ヤフオクの仕入れは、出品者のインボイス登録番号を記録してください。</p>' : ''}
+    <label class="field"><span>出品者（仕入れ先）の名前・ID</span>
+      <input type="text" id="inv-seller" value="${esc(it.seller_name || '')}" autocomplete="off"></label>
+    <label class="field"><span>インボイス</span>
+      <select id="inv-status">
+        <option value="" ${!st ? 'selected' : ''}>未確認</option>
+        <option value="registered" ${st === 'registered' ? 'selected' : ''}>登録番号あり</option>
+        <option value="none" ${st === 'none' ? 'selected' : ''}>登録のない相手</option>
+      </select></label>
+    <label class="field" id="inv-no-wrap" ${st === 'registered' ? '' : 'hidden'}><span>登録番号（T＋数字13ケタ）</span>
+      <input type="text" id="inv-no" value="${esc(it.invoice_no || '')}" placeholder="T1234567890123" autocapitalize="characters" autocomplete="off" inputmode="text"></label>
+    <button class="btn ghost" id="inv-save">保存する</button>
+    <p class="note">今：${label}</p>`;
+  const $s = document.getElementById('inv-status');
+  $s.addEventListener('change', () => { document.getElementById('inv-no-wrap').hidden = $s.value !== 'registered'; });
+  document.getElementById('inv-save').addEventListener('click', async () => {
+    try {
+      const r = await api(`/api/items/${it.id}/invoice`, { method: 'PUT', body: JSON.stringify({
+        seller_name: document.getElementById('inv-seller').value, invoice_status: $s.value, invoice_no: document.getElementById('inv-no').value,
+      }) });
+      Object.assign(it, r);
+      $c.classList.remove('need');
+      toast('インボイスの情報を保存しました');
+      renderInvoice(it);
+    } catch (e) { toast(e.message); }
+  });
+}
+
 /* ---------- 出品文（Geminiで作る・確認して直す） ---------- */
 const CONDITIONS = ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'];
 const margin = (price, cost) => (price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : null);
@@ -501,6 +541,7 @@ async function generateListing(it) {
     renderListing(it, listing, drafts);
   } catch (e) {
     toast(e.message);
+    renderInvoice(it);
     loadListing(it);
   }
 }
