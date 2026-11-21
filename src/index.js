@@ -2,6 +2,7 @@
 
 import { buildPreview } from './import.js';
 import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
+import { handleListings } from './listings.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -109,6 +110,7 @@ async function listItems(url, env) {
   const sql = `SELECT i.id, i.mgmt_no, i.supplier_code, s.name AS supplier_name, i.purchase_date,
       i.brand, i.category, i.name, i.model, i.rank, i.cost, i.status, i.supplier_images_json,
       i.thumb_version,
+      (SELECT CASE WHEN l.ready = 1 THEN 'ready' ELSE 'draft' END FROM listings l WHERE l.item_id = i.id) AS listing_state,
       COALESCE(i.thumb_photo_id, (SELECT p.drive_id FROM photos p WHERE p.item_id = i.id ORDER BY p.folder_id, p.position LIMIT 1)) AS photo_id,
       CAST(julianday('now', '+9 hours') - julianday(i.purchase_date) AS INTEGER) AS days
     FROM items i JOIN suppliers s ON s.code = i.supplier_code
@@ -150,6 +152,8 @@ export default {
 
     if (pathname.startsWith('/api/')) {
       try {
+        const lr = await handleListings(req, env, url);
+        if (lr) return lr;
         if (pathname.startsWith('/api/photos/')) {
           const res = await handlePhotos(req, env, url);
           if (res) return res;

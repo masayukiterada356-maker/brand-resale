@@ -98,7 +98,8 @@ async function listFolders(url, env) {
 }
 
 async function getFolder(id, env) {
-  const folder = await env.DB.prepare(`SELECT f.*, i.mgmt_no FROM photo_folders f
+  const folder = await env.DB.prepare(`SELECT f.*, i.mgmt_no, ai.mgmt_no AS ai_mgmt_no FROM photo_folders f
+      LEFT JOIN items ai ON ai.id = f.ai_item_id
       LEFT JOIN items i ON i.id = f.item_id WHERE f.drive_id = ?`).bind(id).first();
   if (!folder) return fail('見つかりません', 404);
   const { results: photos } = await env.DB
@@ -107,12 +108,12 @@ async function getFolder(id, env) {
   // 候補：まだ写真が割り当てられていない在庫。撮影日より前に仕入れたものを先に
   const { results: candidates } = await env.DB.prepare(`SELECT i.id, i.mgmt_no, i.brand, i.category, i.name, i.model,
         i.purchase_date, i.supplier_images_json,
-        (i.purchase_date <= ?) AS before_shoot
+        (i.purchase_date <= ?) AS before_shoot, (i.id = ?) AS ai_pick
       FROM items i
       WHERE i.status = 'in_stock'
         AND NOT EXISTS (SELECT 1 FROM photo_folders f WHERE f.item_id = i.id)
-      ORDER BY before_shoot DESC, i.purchase_date DESC, i.id DESC
-      LIMIT 300`).bind(folder.shoot_date).all();
+      ORDER BY ai_pick DESC, before_shoot DESC, i.purchase_date DESC, i.id DESC
+      LIMIT 300`).bind(folder.shoot_date, folder.ai_item_id ?? -1).all();
 
   return json({
     folder,

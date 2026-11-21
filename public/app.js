@@ -82,6 +82,7 @@ async function loadList() {
         <div class="right">
           <div class="yen">${yen(it.cost)}</div>
           <div class="days">${it.days}日目</div>
+          ${it.listing_state === 'ready' ? '<span class="chip ok">出品文OK</span>' : it.listing_state === 'draft' ? '<span class="chip duplicate">文を確認</span>' : ''}
         </div>
       </a>`).join('');
   } catch (e) {
@@ -123,6 +124,7 @@ async function viewItem(id) {
         <div class="big-cost" style="margin-top:8px">${yen(it.cost)}</div>
         <div class="note">仕入れ値（税込）・仕入れから${it.days}日目</div>
       </div>
+      <div id="listing"></div>
       <div class="card">
         <h2>仕入れ</h2>
         <dl class="kv">
@@ -149,6 +151,7 @@ async function viewItem(id) {
       $view.querySelectorAll('.pick-btn').forEach((x) => x.classList.toggle('on', x === b));
       await setThumb(it.id, b.dataset.photo, true);
     }));
+    loadListing(it);
     // 写真はあるのにサムネイルがまだない時は、1枚目で作る
     if (it.photos.length && !it.thumb_version) await setThumb(it.id, it.photos[0].drive_id, false);
   } catch (e) {
@@ -310,6 +313,111 @@ async function runCommit() {
   }
 }
 
+
+/* ---------- 出品文（Geminiで作る・確認して直す） ---------- */
+const CONDITIONS = ['新品、未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり', '全体的に状態が悪い'];
+const margin = (price, cost) => (price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : null);
+
+async function loadListing(it) {
+  const $l = document.getElementById('listing');
+  if (!$l) return;
+  try {
+    const { listing } = await api(`/api/items/${it.id}/listing`);
+    renderListing(it, listing);
+  } catch (e) {
+    $l.innerHTML = `<div class="card note">${esc(e.message)}</div>`;
+  }
+}
+
+function renderListing(it, l) {
+  const $l = document.getElementById('listing');
+  if (!$l) return;
+  if (!l) {
+    $l.innerHTML = `
+      <div class="card">
+        <h2>出品文</h2>
+        <p class="note" style="margin-top:0">Geminiが写真と仕入れ情報から、タイトル・説明文・推奨価格を作ります。${it.photos.length ? '' : '（外注さんの写真がまだないので、仕入れ先の情報だけで作ります）'}</p>
+        <button class="btn" id="gen">Geminiで出品文を作る</button>
+      </div>`;
+    document.getElementById('gen').addEventListener('click', () => generateListing(it));
+    return;
+  }
+  const off = (p) => (p ? Math.max(p - 1000, 300) : null);
+  $l.innerHTML = `
+    <div class="card listing ${l.ready ? 'is-ready' : ''}">
+      <div class="lhead"><h2>出品文</h2>${l.ready ? '<span class="chip ok">確認済み</span>' : '<span class="chip duplicate">未確認</span>'}</div>
+      <label class="field"><span>タイトル <b id="tcount"></b></span>
+        <input type="text" id="l-title" value="${esc(l.title)}" maxlength="60"></label>
+      <label class="field"><span>商品の状態</span>
+        <select id="l-cond">${CONDITIONS.map((c) => `<option ${c === l.condition ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label class="field"><span>説明文 <b id="dcount"></b></span>
+        <textarea id="l-desc" rows="12">${esc(l.description)}</textarea></label>
+      <div class="price-box">
+        <label class="field" style="margin:0"><span>メルカリの価格（円）</span>
+          <input type="number" id="l-price" inputmode="numeric" value="${l.price ?? ''}"></label>
+        <div class="price-side">
+          <div>利益率 <b id="l-margin">—</b></div>
+          <div class="note">ラクマ・ヤフー <b id="l-off">—</b></div>
+        </div>
+      </div>
+      ${l.ai_price ? `<p class="note ai-price">Geminiの推奨：<b>${yen(l.ai_price)}</b>　${esc(l.ai_price_reason || '')}
+        ${l.ai_price !== l.price ? ' <button class="linkbtn" id="use-ai">この金額にする</button>' : ''}</p>` : ''}
+      <div class="lbtns">
+        <button class="btn" id="l-ok">${l.ready ? '保存する' : '確認して保存'}</button>
+        <button class="btn ghost" id="l-regen">作り直す</button>
+      </div>
+      ${l.ready ? '<button class="linkbtn" id="l-unready">未確認に戻す</button>' : '<p class="note">「確認して保存」した商品が、フリマの下書き作成の対象になります。</p>'}
+    </div>`;
+
+  const $t = document.getElementById('l-title');
+  const $d = document.getElementById('l-desc');
+  const $p = document.getElementById('l-price');
+  const upd = () => {
+    const n = [...$t.value].length;
+    document.getElementById('tcount').textContent = `${n}/40`;
+    document.getElementById('tcount').className = n > 40 ? 'over' : '';
+    const dn = [...$d.value].length;
+    document.getElementById('dcount').textContent = `${dn}文字`;
+    const pr = Number($p.value);
+    const mg = margin(pr, it.cost);
+    const $m = document.getElementById('l-margin');
+    $m.textContent = mg == null ? '—' : `${mg}%`;
+    $m.className = mg != null && mg < 20 ? 'over' : '';
+    document.getElementById('l-off').textContent = pr ? yen(off(pr)) : '—';
+  };
+  [$t, $d, $p].forEach((el) => el.addEventListener('input', upd));
+  upd();
+
+  const save = async (ready) => {
+    try {
+      const r = await api(`/api/items/${it.id}/listing`, {
+        method: 'PUT',
+        body: JSON.stringify({ title: $t.value, condition: document.getElementById('l-cond').value, description: $d.value, price: $p.value, ready }),
+      });
+      toast(ready ? '確認済みにしました' : '保存しました');
+      renderListing(it, r.listing);
+    } catch (e) { toast(e.message); }
+  };
+  document.getElementById('l-ok').addEventListener('click', () => save(true));
+  document.getElementById('l-unready')?.addEventListener('click', () => save(false));
+  document.getElementById('use-ai')?.addEventListener('click', () => { $p.value = l.ai_price; upd(); });
+  document.getElementById('l-regen').addEventListener('click', () => {
+    if (confirm('Geminiでタイトルと説明文を作り直します。今の文は上書きされます（価格はそのまま）。よろしいですか？')) generateListing(it);
+  });
+}
+
+async function generateListing(it) {
+  const $l = document.getElementById('listing');
+  $l.innerHTML = '<div class="card"><h2>出品文</h2><p class="note">Geminiが写真を見て作っています…（10〜20秒ほど）</p></div>';
+  try {
+    const { listing } = await api(`/api/items/${it.id}/listing/generate`, { method: 'POST' });
+    renderListing(it, listing);
+  } catch (e) {
+    toast(e.message);
+    loadListing(it);
+  }
+}
+
 /* ---------- 写真の割り当て ---------- */
 let photoFilter = 'unassigned';
 
@@ -400,7 +508,7 @@ async function viewFolder(id) {
       ${c.supplier_thumb ? `<img class="thumb" src="${esc(c.supplier_thumb)}" alt="" loading="lazy">` : '<div class="thumb">写真なし</div>'}
       <div class="body">
         <div class="mgmt">${esc(c.mgmt_no)}</div>
-        <div class="brand">${esc(c.brand)}</div>
+        <div class="brand">${esc(c.brand)} ${c.ai_pick ? '<span class="chip ai">AIのおすすめ</span>' : ''}</div>
         <div class="nm">${esc(itemLabel(c))}</div>
       </div>
       <div class="when">仕入れ<br>${esc(c.purchase_date.slice(5).replace('-', '/'))}</div>
@@ -409,6 +517,7 @@ async function viewFolder(id) {
   $view.innerHTML = `
     <div class="strip">${d.photos.map((p) => `<img src="/api/photos/img/${esc(p.drive_id)}?s=600" alt="" loading="lazy">`).join('')}</div>
     <p class="note">${d.photos.length}枚・横にスクロールして全部見られます</p>
+    <div id="ai-box"></div>
     ${f.status === 'assigned' ? `
       <div class="card assigned-box">
         <div><div class="note">割り当て済み</div><div class="mgmt" style="font-size:16px">${esc(f.mgmt_no)}</div></div>
@@ -440,6 +549,40 @@ async function viewFolder(id) {
   };
   render();
   document.getElementById('cq')?.addEventListener('input', (ev) => render(ev.target.value));
+
+  // Geminiに写真を見せて、どの商品かを当ててもらう（未割り当ての時だけ・1回だけ）
+  const $ai = document.getElementById('ai-box');
+  const showAi = (r) => {
+    if (!r.item_id) { $ai.innerHTML = `<div class="card ai-card"><div class="note">AI：当てはまる商品が見つかりませんでした。${esc(r.reason || '')}</div></div>`; return; }
+    const c = d.candidates.find((x) => x.id === r.item_id);
+    if (!c) return;
+    $ai.innerHTML = `
+      <div class="card ai-card">
+        <div class="ai-head"><span class="chip ai">AIのおすすめ</span><span class="note">確からしさ ${Math.round((r.confidence || 0) * 100)}%</span></div>
+        <div class="mgmt" style="font-size:16px">${esc(c.mgmt_no)}</div>
+        <div><span class="brand">${esc(c.brand)}</span> <span class="nm" style="display:inline">${esc(itemLabel(c))}</span></div>
+        <p class="note" style="margin:6px 0 10px">${esc(r.reason || '')}</p>
+        <button class="btn" id="ai-ok">この商品に割り当てる</button>
+      </div>`;
+    document.getElementById('ai-ok').addEventListener('click', () => assign(id, c.id, f));
+  };
+  if (f.status === 'unassigned' && $ai) {
+    if (f.ai_item_id) {
+      showAi({ item_id: f.ai_item_id, confidence: f.ai_confidence, reason: f.ai_reason });
+    } else if (d.candidates.length) {
+      $ai.innerHTML = '<div class="card ai-card"><div class="note">AIが写真を見て、どの商品か探しています…</div></div>';
+      try {
+        const r = await api(`/api/photos/folders/${id}/suggest`, { method: 'POST' });
+        if (location.hash !== `#/photos/${id}`) return;
+        d.candidates.forEach((c) => { c.ai_pick = c.id === r.item_id ? 1 : 0; });
+        d.candidates.sort((a, b) => b.ai_pick - a.ai_pick);
+        render(document.getElementById('cq')?.value || '');
+        showAi(r);
+      } catch (e) {
+        $ai.innerHTML = `<div class="card ai-card"><div class="note">AIで探せませんでした：${esc(e.message)}</div></div>`;
+      }
+    }
+  }
   document.getElementById('unassign')?.addEventListener('click', async () => {
     await api(`/api/photos/folders/${id}/assign`, { method: 'POST', body: JSON.stringify({ unassign: true }) });
     toast('割り当てを外しました'); viewFolder(id); refreshBadge();

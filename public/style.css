@@ -208,3 +208,23 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .pick-btn img { width: 100%; max-width: none; border-radius: 9px; display: block; }
 .pick-btn.on { border-color: var(--accent); }
 .pick-btn span { position: absolute; top: 6px; left: 6px; min-width: 22px; height: 22px; border-radius: 11px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; font-weight: 700; line-height: 22px; text-align: center; }
+
+/* ---------- 出品文 ---------- */
+.chip.ai { background: var(--accent-soft); color: var(--text); border: 1px solid var(--accent); }
+.ai-card { border: 1.5px solid var(--accent); }
+.ai-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.lhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.lhead h2 { margin: 0; }
+select, textarea {
+  width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 16px;
+}
+textarea { font-size: 14px; line-height: 1.55; resize: vertical; }
+label.field b { font-weight: 600; color: var(--sub); margin-left: 4px; }
+b.over, .over { color: var(--bad) !important; }
+.price-box { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; margin-bottom: 8px; }
+.price-box input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.price-side { text-align: right; font-size: 14px; padding-bottom: 4px; }
+.ai-price { margin: 4px 0 12px; }
+.ai-price .linkbtn { padding: 0; margin-left: 4px; color: var(--text); }
+.lbtns { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.item .right .chip { display: inline-block; margin-top: 4px; }
