@@ -158,3 +158,21 @@ test('サイファー：「商品番号」の行から貼り付けても読め�
   assert.equal(p.rows.length, 1);
   assert.equal(p.rows[0].supplier_ref, 'S-00048');
 });
+
+test('エレノス：送料は仕入れ値に含め、複数商品なら分ける', () => {
+  const mail = `注文概要
+	E1001 エルメス スカーフリング × 1
+¥10,000
+	E1002 ルイヴィトン 長財布 × 1
+¥20,000
+小計
+¥30,000
+配送
+
+¥1,001
+合計`;
+  const p = buildPreview(mail, '2026-11-21');
+  assert.equal(p.rows.length, 2);
+  assert.equal(p.rows[0].cost, 10501); // 500＋端数1
+  assert.equal(p.rows[1].cost, 20500);
+});

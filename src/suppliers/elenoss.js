@@ -3,6 +3,7 @@
 // 管理番号の数字＝商品コードの数字部分（E4784 → NFJ4784）
 
 import { splitBrandFromName } from '../brands.js';
+import { addShipping } from './shipping.js';
 
 export const code = 'N';
 
@@ -36,8 +37,6 @@ export function parseText(text) {
     });
   }
   const ship = /配送\s*\r?\n\s*¥\s*([\d,]+)/.exec(text);
-  if (ship && yen(ship[1]) > 0 && rows.length) {
-    rows.forEach((r) => r.warnings.push(`送料${yen(ship[1]).toLocaleString()}円は仕入れ値に入れていません`));
-  }
+  addShipping(rows, ship ? yen(ship[1]) : 0);
   return rows;
 }

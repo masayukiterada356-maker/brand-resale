@@ -2,6 +2,7 @@
 // 管理番号の数字はメールにないため、登録時に入力する（決まりが分かったら自動にする）
 
 import { splitBrandFromName } from '../brands.js';
+import { addShipping } from './shipping.js';
 
 export const code = 'C';
 
@@ -20,7 +21,7 @@ export function parseText(text) {
   const marker = /【[\s　]*商[\s　]*品[\s　]*番[\s　]*号[\s　]*】/;
   const blocks = text.split(new RegExp(`(?=${marker.source})`)).filter((b) => marker.test(b));
   const shipping = yen(field(text, '送料') || '0');
-  return blocks.map((b) => {
+  const rows = blocks.map((b) => {
     const ref = field(b, '商品番号');
     const title = field(b, '商品名').replace(new RegExp(`^${ref}\\s*`), '');
     const price = yen(field(b, '小計') || field(b, '価格(税込)'));
@@ -32,11 +33,13 @@ export function parseText(text) {
       number_candidates: [], // 自動では決めない
       brand, brand_raw: brandRaw,
       category: '', name: rest, model: '', rank: '', accessories: '', notes: '',
-      details: { 'サイファーの商品名': title, ...(shipping ? { 送料: `${shipping}円` } : {}) },
+      details: { 'サイファーの商品名': title },
       images: [],
       bid_price: price, supplier_fee: 0,
-      cost: price + (blocks.length === 1 ? shipping : 0),
-      warnings: shipping && blocks.length === 1 ? [...warnings, `送料${shipping.toLocaleString()}円を仕入れ値に含めました`] : warnings,
+      cost: price,
+      warnings,
     };
   }).filter((r) => r.supplier_ref);
+  addShipping(rows, shipping);
+  return rows;
 }
