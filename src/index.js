@@ -71,7 +71,7 @@ async function importCommit(req, env) {
 
   try {
     await env.DB.batch(rows.map((r) => insert.bind(
-      r.mgmt_no, preview.supplier_code, r.supplier_ref, batch.id, preview.purchase_date,
+      r.mgmt_no, preview.supplier_code, r.supplier_ref, batch.id, r.purchase_date || preview.purchase_date,
       r.brand, r.brand_raw, r.category, r.name, r.model, r.rank, r.accessories, r.notes,
       JSON.stringify(r.details || {}), JSON.stringify(r.images || []),
       r.bid_price, r.supplier_fee, r.cost,

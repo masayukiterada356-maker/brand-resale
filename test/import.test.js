@@ -215,3 +215,16 @@ test('ヤフオク：落札メールから管理番号・仕入れ値・ブラ�
   const withShip = buildPreview(YAHOO + '\n送料：1,200円', '2026-10-15');
   assert.equal(withShip.rows[0].cost, 34750);
 });
+
+test('K-ブランドオフ：開催日で管理番号、箱番号-番号2ケタ', () => {
+  const p = buildPreview(load('brandoff_sjis.csv'), '2026-11-21');
+  assert.equal(p.supplier_code, 'K');
+  assert.equal(p.rows.length, 3);
+  const r = p.rows[0];
+  assert.equal(r.mgmt_no, 'KFI1-07');       // 2026/09/03 → F・I
+  assert.equal(r.purchase_date, '2026-09-03');
+  assert.equal(r.brand, 'BOTTEGA VENETA');
+  assert.equal(r.cost, Math.floor((48000 + 2400) * 1.1));
+  assert.equal(p.rows[2].mgmt_no, 'KFI51-08');
+  assert.equal(r.category, 'バッグ');      // 半角カナを直す
+});

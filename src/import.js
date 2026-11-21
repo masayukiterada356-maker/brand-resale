@@ -5,11 +5,12 @@ import { parseCsv, toRecords } from './csv.js';
 import { prefixFor } from './codes.js';
 import * as komehyo from './suppliers/komehyo.js';
 import * as ecoring from './suppliers/ecoring.js';
+import * as brandoff from './suppliers/brandoff.js';
 import * as elenoss from './suppliers/elenoss.js';
 import * as cypher from './suppliers/cypher.js';
 import * as yahooAuction from './suppliers/yahoo-auction.js';
 
-const PARSERS = [komehyo, ecoring];
+const PARSERS = [komehyo, ecoring, brandoff];
 const TEXT_PARSERS = [elenoss, cypher, yahooAuction]; // メール本文を貼り付けて読む仕入れ先
 
 export function detectSupplier(header) {
@@ -40,7 +41,7 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     parsed = toRecords(header, rows.slice(1)).map((rec) => parser.parseRecord(rec));
   }
 
-  const prefix = prefixFor(parser.code, purchaseDate);
+  const defaultPrefix = prefixFor(parser.code, purchaseDate);
   const usedMgmt = new Set(existing.mgmtNos || []);
   const usedRefs = new Set(existing.refs || []);
   const legacy = new Set(existing.legacyMgmtNos || []); // 前の管理表から移した商品の管理番号
@@ -48,6 +49,9 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
   const out = [];
   parsed.forEach((p, i) => {
     const line = i + 2; // 行の番号（CSVでは見出しが1行目）
+    // CSVに仕入れ日（開催日）が入っている仕入れ先は、その日で管理番号を作る
+    const rowDate = p.purchase_date || purchaseDate;
+    const prefix = p.purchase_date ? prefixFor(parser.code, p.purchase_date) : defaultPrefix;
     if (p.silent) return;
     const base = { line, supplier_ref: p.supplier_ref };
 
@@ -96,6 +100,7 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     out.push({
       ...base,
       ...p,
+      purchase_date: rowDate,
       mgmt_no: mgmt || (p.number_candidates.length ? prefix + p.number_candidates[0] : ''),
       status,
       message: [message, warn].filter(Boolean).join(' / '),
@@ -105,7 +110,7 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
   const count = (s) => out.filter((r) => r.status === s).length;
   return {
     supplier_code: parser.code,
-    prefix,
+    prefix: defaultPrefix,
     purchase_date: purchaseDate,
     rows: out,
     summary: {
