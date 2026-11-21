@@ -40,6 +40,8 @@ const itemLabel = (it) => [it.category, it.name, it.model].filter(Boolean).join(
 
 /* ---------- 在庫一覧 ---------- */
 let searchText = '';
+let listView = 'stock';
+const VIEWS = { stock: '在庫', unlisted: '未出品', listed: '出品中', sold: '売れた' };
 
 async function viewItems() {
   setHeader('在庫', 'items');
@@ -48,8 +50,14 @@ async function viewItems() {
       <div class="stat"><div class="k">在庫数</div><div class="v" id="s-count">…</div></div>
       <div class="stat"><div class="k">在庫の仕入れ値合計</div><div class="v" id="s-cost">…</div></div>
     </div>
+    <div class="seg" id="views">${Object.entries(VIEWS).map(([k, v]) => `<button data-v="${k}" class="${k === listView ? 'on' : ''}">${v}</button>`).join('')}</div>
     <input class="search" id="q" type="search" placeholder="管理番号・ブランド・商品名で探す" value="${esc(searchText)}">
     <div class="list" id="list"></div>`;
+  document.querySelectorAll('#views button').forEach((b) => b.addEventListener('click', () => {
+    listView = b.dataset.v;
+    document.querySelectorAll('#views button').forEach((x) => x.classList.toggle('on', x === b));
+    loadList();
+  }));
   const $q = document.getElementById('q');
   let timer;
   $q.addEventListener('input', () => {
@@ -62,9 +70,10 @@ async function viewItems() {
 async function loadList() {
   const $list = document.getElementById('list');
   try {
-    const data = await api('/api/items?q=' + encodeURIComponent(searchText));
-    document.getElementById('s-count').textContent = `${data.totals.count}点`;
-    document.getElementById('s-cost').textContent = yen(data.totals.cost);
+    const data = await api(`/api/items?view=${listView}&q=${encodeURIComponent(searchText)}`);
+    const t = data.totals;
+    document.getElementById('s-count').innerHTML = `${t.count}点<span class="sub-stat">未出品 ${t.unlisted}・出品中 ${t.listed}</span>`;
+    document.getElementById('s-cost').innerHTML = `${yen(t.cost)}<span class="sub-stat">未出品 ${yen(t.unlisted_cost)}</span>`;
     if (!data.items.length) {
       $list.innerHTML = searchText
         ? `<div class="empty">「${esc(searchText)}」に合う商品はありません</div>`
@@ -80,8 +89,13 @@ async function loadList() {
           <div class="nm">${esc(itemLabel(it))}</div>
         </div>
         <div class="right">
+          ${it.status === 'sold' ? `
+          <div class="yen">${yen(it.sold_price)}</div>
+          <div class="days ${it.profit < 0 ? 'neg' : ''}">利益 ${yen(it.profit)}</div>
+          <div class="days">${esc((it.sold_date || '').slice(2).replace(/-/g, '/'))}・${it.days}日</div>` : `
           <div class="yen">${yen(it.cost)}</div>
           <div class="days">${it.days}日目</div>
+          ${it.status === 'listed' ? `<span class="chip ok">出品中${it.channel ? '・' + esc(it.channel) : ''}</span>` : ''}`}
           ${it.listing_state === 'ready' ? '<span class="chip ok">出品文OK</span>' : it.listing_state === 'draft' ? '<span class="chip duplicate">文を確認</span>' : ''}
         </div>
       </a>`).join('');
@@ -122,15 +136,37 @@ async function viewItem(id) {
         <div class="brand" style="font-size:18px">${esc(it.brand)}</div>
         <div>${esc(itemLabel(it))}</div>
         <div class="big-cost" style="margin-top:8px">${yen(it.cost)}</div>
-        <div class="note">仕入れ値（税込）・仕入れから${it.days}日目</div>
+        <div class="note">仕入れ値（税込）・${it.status === 'sold' ? `${it.days}日で売れました` : `仕入れから${it.days}日目`}</div>
       </div>
-      <div id="listing"></div>
+      ${it.sale ? `
+      <div class="card">
+        <h2>売れた記録</h2>
+        <dl class="kv">
+          <dt>売れた場所</dt><dd>${esc(it.sale.platform || '')}</dd>
+          <dt>売れた日</dt><dd>${esc(it.sale.sold_date || '')}（${it.days}日）</dd>
+          <dt>販売価格</dt><dd>${yen(it.sale.price)}</dd>
+          <dt>送料</dt><dd>${yen(it.sale.shipping)}</dd>
+          <dt>入金額</dt><dd>${yen(it.sale.payout)}</dd>
+          <dt>梱包材</dt><dd>${yen(it.sale.packing)}</dd>
+          ${it.sale.photo_fee ? `<dt>撮影代</dt><dd>${yen(it.sale.photo_fee)}</dd>` : ''}
+          ${it.sale.extra_shipping ? `<dt>送料（その他）</dt><dd>${yen(it.sale.extra_shipping)}</dd>` : ''}
+          ${it.sale.repair ? `<dt>リペア</dt><dd>${yen(it.sale.repair)}</dd>` : ''}
+          <dt>利益</dt><dd><b class="${it.sale.profit < 0 ? 'neg' : ''}">${yen(it.sale.profit)}</b></dd>
+          ${it.sale.likes != null ? `<dt>いいね・閲覧</dt><dd>${it.sale.likes ?? '—'}・${it.sale.views ?? '—'}</dd>` : ''}
+        </dl>
+      </div>` : ''}
+      ${it.status === 'sold' ? '' : '<div id="listing"></div>'}
       <div class="card">
         <h2>仕入れ</h2>
         <dl class="kv">
           <dt>仕入れ先</dt><dd>${esc(it.supplier_name)}</dd>
           <dt>仕入れ先の番号</dt><dd>${esc(it.supplier_ref)}</dd>
           <dt>仕入れ日</dt><dd>${esc(it.purchase_date)}</dd>
+          ${it.listed_date ? `<dt>出品日</dt><dd>${esc(it.listed_date)}</dd>` : ''}
+          ${it.channel ? `<dt>販路</dt><dd>${esc(it.channel)}</dd>` : ''}
+          ${it.target_price ? `<dt>目安価格</dt><dd>${yen(it.target_price)}</dd>` : ''}
+          ${it.start_price ? `<dt>スタート価格</dt><dd>${yen(it.start_price)}</dd>` : ''}
+          ${it.memo ? `<dt>メモ</dt><dd>${esc(it.memo)}</dd>` : ''}
           <dt>落札額</dt><dd>${yen(it.bid_price)}</dd>
           <dt>落札手数料</dt><dd>${yen(it.supplier_fee)}</dd>
           <dt>仕入れ値（税込）</dt><dd>${yen(it.cost)}</dd>
@@ -295,7 +331,7 @@ function renderPreview() {
             <span class="yen">${yen(r.cost)}</span>
           </div>` : ''}
           ${r.message ? `<div class="msg">${esc(r.message)}</div>` : ''}
-          ${r.status === 'conflict' || imp.overrides[r.line] ? `
+          ${r.status === 'conflict' || imp.overrides[r.line] || /前の管理表/.test(r.message || '') ? `
             <input type="text" data-line="${r.line}" placeholder="管理番号（数字だけなら ${esc(p.prefix)} を自動で付けます）" value="${esc(imp.overrides[r.line] || '')}" autocapitalize="characters" autocomplete="off">` : ''}
         </div>`).join('')}
       <div class="total"><span>登録する${s.ok}点の仕入れ値</span><span>${yen(s.total_cost)}</span></div>

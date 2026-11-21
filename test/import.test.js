@@ -176,3 +176,9 @@ test('エレノス：送料は仕入れ値に含め、複数商品なら分け�
   assert.equal(p.rows[0].cost, 10501); // 500＋端数1
   assert.equal(p.rows[1].cost, 20500);
 });
+
+test('前の管理表から移した商品と同じ番号は、2重に登録しない', () => {
+  const p = buildPreview(load('ecoring_sjis.csv'), '2026-09-20', { mgmtNos: new Set(['EFI1528']), legacyMgmtNos: new Set(['EFI1528']) });
+  assert.equal(p.rows[0].status, 'duplicate');
+  assert.equal(p.rows[1].status, 'ok');
+});

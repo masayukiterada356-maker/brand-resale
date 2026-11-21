@@ -42,6 +42,7 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
   const prefix = prefixFor(parser.code, purchaseDate);
   const usedMgmt = new Set(existing.mgmtNos || []);
   const usedRefs = new Set(existing.refs || []);
+  const legacy = new Set(existing.legacyMgmtNos || []); // 前の管理表から移した商品の管理番号
 
   const out = [];
   parsed.forEach((p, i) => {
@@ -67,6 +68,11 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     if (override) {
       if (usedMgmt.has(override)) { status = 'conflict'; message = `${override} はすでにあります`; }
       else mgmt = override;
+    } else if (p.number_candidates.length && legacy.has(prefix + p.number_candidates[0])) {
+      // 前の管理表から移した商品と同じ番号＝同じ商品とみなし、2重に登録しない
+      out.push({ ...base, ...p, mgmt_no: prefix + p.number_candidates[0], status: 'duplicate',
+        message: '前の管理表から移した商品と同じ管理番号です（登録済み）。別の商品なら管理番号を入力してください' });
+      return;
     } else {
       const tried = [];
       for (const num of p.number_candidates) {

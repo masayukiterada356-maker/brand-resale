@@ -15,10 +15,11 @@ const fail = (message, status = 400) => json({ error: message }, status);
 
 async function loadExisting(db, supplierCode) {
   const { results } = await db
-    .prepare('SELECT mgmt_no, supplier_code, supplier_ref FROM items')
+    .prepare('SELECT mgmt_no, supplier_code, supplier_ref, legacy_row FROM items')
     .all();
   return {
     mgmtNos: new Set(results.map((r) => r.mgmt_no)),
+    legacyMgmtNos: new Set(results.filter((r) => r.legacy_row).map((r) => r.mgmt_no)),
     refs: new Set(results.filter((r) => !supplierCode || r.supplier_code === supplierCode)
       .map((r) => `${r.supplier_code}:${r.supplier_ref}`)),
   };
@@ -99,24 +100,29 @@ function parseItem(r) {
 
 async function listItems(url, env) {
   const q = (url.searchParams.get('q') || '').trim();
-  const status = url.searchParams.get('status') || '';
+  // view：stock＝在庫（未出品＋出品中）、unlisted＝未出品、listed＝出品中、sold＝売れた商品
+  const view = url.searchParams.get('view') || 'stock';
   const where = [];
   const args = [];
-  if (status) { where.push('i.status = ?'); args.push(status); }
+  if (view === 'stock') where.push("i.status != 'sold'");
+  else if (view === 'unlisted') where.push("i.status = 'in_stock'");
+  else if (view === 'listed') where.push("i.status = 'listed'");
+  else if (view === 'sold') where.push("i.status = 'sold'");
   if (q) {
-    where.push('(i.mgmt_no LIKE ? OR i.brand LIKE ? OR i.name LIKE ? OR i.category LIKE ? OR i.model LIKE ?)');
+    where.push('(i.mgmt_no LIKE ? OR i.brand LIKE ? OR i.name LIKE ? OR i.category LIKE ? OR i.model LIKE ? OR i.channel LIKE ?)');
     const like = `%${q}%`;
-    args.push(like, like, like, like, like);
+    args.push(like, like, like, like, like, like);
   }
   const sql = `SELECT i.id, i.mgmt_no, i.supplier_code, s.name AS supplier_name, i.purchase_date,
       i.brand, i.category, i.name, i.model, i.rank, i.cost, i.status, i.supplier_images_json,
-      i.thumb_version,
+      i.thumb_version, i.channel, i.listed_date, sa.sold_date, sa.price AS sold_price, sa.profit, sa.platform AS sold_platform,
       (SELECT CASE WHEN l.ready = 1 THEN 'ready' ELSE 'draft' END FROM listings l WHERE l.item_id = i.id) AS listing_state,
       COALESCE(i.thumb_photo_id, (SELECT p.drive_id FROM photos p WHERE p.item_id = i.id ORDER BY p.folder_id, p.position LIMIT 1)) AS photo_id,
-      CAST(julianday('now', '+9 hours') - julianday(i.purchase_date) AS INTEGER) AS days
+      CAST(COALESCE(julianday(sa.sold_date), julianday('now', '+9 hours')) - julianday(i.purchase_date) AS INTEGER) AS days
     FROM items i JOIN suppliers s ON s.code = i.supplier_code
+    LEFT JOIN sales sa ON sa.item_id = i.id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY i.purchase_date DESC, i.id DESC LIMIT 500`;
+    ORDER BY ${view === 'sold' ? 'sa.sold_date DESC' : 'i.purchase_date DESC'}, i.id DESC LIMIT 300`;
   const { results } = await env.DB.prepare(sql).bind(...args).all();
   const items = results.map((r) => {
     const imgs = JSON.parse(r.supplier_images_json || '[]');
@@ -125,16 +131,18 @@ async function listItems(url, env) {
       : r.photo_id ? `/api/photos/img/${r.photo_id}?s=200` : imgs[0] || null;
     return { ...r, thumb };
   });
-  const totals = await env.DB
-    .prepare("SELECT COUNT(*) AS count, COALESCE(SUM(cost),0) AS cost FROM items WHERE status = 'in_stock'")
-    .first();
+  const totals = await env.DB.prepare(`SELECT
+      SUM(status != 'sold') AS count, COALESCE(SUM(CASE WHEN status != 'sold' THEN cost END), 0) AS cost,
+      SUM(status = 'in_stock') AS unlisted, COALESCE(SUM(CASE WHEN status = 'in_stock' THEN cost END), 0) AS unlisted_cost,
+      SUM(status = 'listed') AS listed, SUM(status = 'sold') AS sold
+    FROM items`).first();
   return json({ items, totals });
 }
 
 async function getItem(id, env) {
   const r = await env.DB
     .prepare(`SELECT i.*, s.name AS supplier_name,
-        CAST(julianday('now', '+9 hours') - julianday(i.purchase_date) AS INTEGER) AS days
+        CAST(COALESCE(julianday(i.sold_date), julianday('now', '+9 hours')) - julianday(i.purchase_date) AS INTEGER) AS days
       FROM items i JOIN suppliers s ON s.code = i.supplier_code WHERE i.id = ?`)
     .bind(id)
     .first();
@@ -142,7 +150,8 @@ async function getItem(id, env) {
   const { results: photos } = await env.DB.prepare(`SELECT p.drive_id, p.position, f.date_label, f.number, f.drive_id AS folder_id
       FROM photos p JOIN photo_folders f ON f.drive_id = p.folder_id
       WHERE p.item_id = ? ORDER BY f.shoot_date, p.position`).bind(id).all();
-  return json({ ...parseItem(r), photos });
+  const sale = await env.DB.prepare('SELECT * FROM sales WHERE item_id = ?').bind(id).first();
+  return json({ ...parseItem(r), photos, sale: sale || null });
 }
 
 export default {
