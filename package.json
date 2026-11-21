@@ -1,0 +1,19 @@
+{
+  "name": "brand-resale",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "dev": "wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply brand-resale-db --local",
+    "deploy": "wrangler deploy"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^4.166.0"
+  },
+  "type": "module"
+}
