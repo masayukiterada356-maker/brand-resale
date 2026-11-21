@@ -7,9 +7,10 @@ import * as komehyo from './suppliers/komehyo.js';
 import * as ecoring from './suppliers/ecoring.js';
 import * as elenoss from './suppliers/elenoss.js';
 import * as cypher from './suppliers/cypher.js';
+import * as yahooAuction from './suppliers/yahoo-auction.js';
 
 const PARSERS = [komehyo, ecoring];
-const TEXT_PARSERS = [elenoss, cypher]; // メール本文を貼り付けて読む仕入れ先
+const TEXT_PARSERS = [elenoss, cypher, yahooAuction]; // メール本文を貼り付けて読む仕入れ先
 
 export function detectSupplier(header) {
   return PARSERS.find((p) => p.detect(header)) || null;
@@ -34,7 +35,7 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     const header = rows[0].map((h) => h.trim());
     parser = detectSupplier(header);
     if (!parser) {
-      throw new Error('この形式はまだ読めません（コメ兵・エコリングのCSV、エレノス・サイファーのメールに対応）');
+      throw new Error('この形式はまだ読めません（コメ兵・エコリングのCSV、エレノス・サイファー・ヤフオクのメールに対応）');
     }
     parsed = toRecords(header, rows.slice(1)).map((rec) => parser.parseRecord(rec));
   }

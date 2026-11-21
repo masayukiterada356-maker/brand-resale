@@ -237,7 +237,7 @@ function decodeBytes(buf) {
 }
 
 const STATUS_LABEL = { ok: '登録する', conflict: '番号が重なる', duplicate: '登録済み', skipped: '対象外' };
-const SUPPLIER_NAME = { R: 'コメ兵オークション', E: 'エコリング', N: 'エレノス', C: 'サイファー' };
+const SUPPLIER_NAME = { R: 'コメ兵オークション', E: 'エコリング', N: 'エレノス', C: 'サイファー', Y: 'ヤフオク' };
 let importMode = 'csv';
 
 function viewImport() {
@@ -253,7 +253,7 @@ function viewImport() {
         <input type="file" id="file" accept=".csv,text/csv">
         <span id="file-name">${imp.filename ? esc(imp.filename) : 'コメ兵・エコリングのCSVを選ぶ'}</span>
       </label>` : `
-      <label class="field"><span>エレノス・サイファーの注文メールの本文</span>
+      <label class="field"><span>エレノス・サイファーの注文メール、ヤフオクの落札メールの本文</span>
         <textarea id="mail" rows="7" placeholder="注文確認メールの「注文概要」や「商品詳細」の部分を貼り付けてください">${imp.filename === 'メール' ? esc(imp.text) : ''}</textarea></label>`}
       <label class="field" style="margin-top:12px">
         <span>仕入れ日（管理番号の年・月になります）</span>

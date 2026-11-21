@@ -182,3 +182,36 @@ test('前の管理表から移した商品と同じ番号は、2重に登録し�
   assert.equal(p.rows[0].status, 'duplicate');
   assert.equal(p.rows[1].status, 'ok');
 });
+
+const YAHOO = `qfx********様
+
+おめでとうございます！
+商品「1円 ■美品■ PIERRE HARDY ピエール アルディ アルファ レザー ミラー付き クロスボディ ショルダーバッグ 斜め掛け ブラウン系 HE3202」を落札しました。
+
+┃■落札したオークションの情報
+
+商品：1円 ■美品■ PIERRE HARDY ピエール アルディ アルファ レザー ミラー付き クロスボディ ショルダーバッグ 斜め掛け ブラウン系 HE3202
+オークションID：w1247518192
+終了日時：10月 15日 22時 48分
+購入手続き期限：10月 20日 23時 59分 ※
+---------------------------
+希望数量：1
+落札数量：1
+落札単価：30,500 円
+消費税：3,050 円
+落札合計（税込）：33,550 円`;
+
+test('ヤフオク：落札メールから管理番号・仕入れ値・ブランド', () => {
+  const p = buildPreview(YAHOO, '2026-10-15');
+  assert.equal(p.supplier_code, 'Y');
+  const r = p.rows[0];
+  assert.equal(r.mgmt_no, 'YFJ8192');
+  assert.equal(r.cost, 33550);
+  assert.equal(r.brand, 'PIERRE HARDY');
+  assert.equal(r.rank, '美品');
+  assert.equal(r.supplier_ref, 'w1247518192');
+  assert.equal(r.status, 'ok');
+  // 送料が書いてあれば足す
+  const withShip = buildPreview(YAHOO + '\n送料：1,200円', '2026-10-15');
+  assert.equal(withShip.rows[0].cost, 34750);
+});
