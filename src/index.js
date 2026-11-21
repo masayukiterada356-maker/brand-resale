@@ -1,6 +1,7 @@
 // Cloudflare Worker：/api/* はここで処理し、それ以外は public/ の画面を返す
 
 import { buildPreview } from './import.js';
+import { handlePhotos, syncDrive } from './photos.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -107,6 +108,7 @@ async function listItems(url, env) {
   }
   const sql = `SELECT i.id, i.mgmt_no, i.supplier_code, s.name AS supplier_name, i.purchase_date,
       i.brand, i.category, i.name, i.model, i.rank, i.cost, i.status, i.supplier_images_json,
+      COALESCE(i.thumb_photo_id, (SELECT p.drive_id FROM photos p WHERE p.item_id = i.id ORDER BY p.folder_id, p.position LIMIT 1)) AS photo_id,
       CAST(julianday('now', '+9 hours') - julianday(i.purchase_date) AS INTEGER) AS days
     FROM items i JOIN suppliers s ON s.code = i.supplier_code
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -115,7 +117,8 @@ async function listItems(url, env) {
   const items = results.map((r) => {
     const imgs = JSON.parse(r.supplier_images_json || '[]');
     delete r.supplier_images_json;
-    return { ...r, thumb: imgs[0] || null };
+    const thumb = r.photo_id ? `/api/photos/img/${r.photo_id}?s=200` : imgs[0] || null;
+    return { ...r, thumb };
   });
   const totals = await env.DB
     .prepare("SELECT COUNT(*) AS count, COALESCE(SUM(cost),0) AS cost FROM items WHERE status = 'in_stock'")
@@ -130,7 +133,11 @@ async function getItem(id, env) {
       FROM items i JOIN suppliers s ON s.code = i.supplier_code WHERE i.id = ?`)
     .bind(id)
     .first();
-  return r ? json(parseItem(r)) : fail('見つかりません', 404);
+  if (!r) return fail('見つかりません', 404);
+  const { results: photos } = await env.DB.prepare(`SELECT p.drive_id, p.position, f.date_label, f.number, f.drive_id AS folder_id
+      FROM photos p JOIN photo_folders f ON f.drive_id = p.folder_id
+      WHERE p.item_id = ? ORDER BY f.shoot_date, p.position`).bind(id).all();
+  return json({ ...parseItem(r), photos });
 }
 
 export default {
@@ -141,6 +148,10 @@ export default {
 
     if (pathname.startsWith('/api/')) {
       try {
+        if (pathname.startsWith('/api/photos/')) {
+          const res = await handlePhotos(req, env, url);
+          if (res) return res;
+        }
         if (m === 'POST' && pathname === '/api/import/preview') return await importPreview(req, env);
         if (m === 'POST' && pathname === '/api/import/commit') return await importCommit(req, env);
         if (m === 'GET' && pathname === '/api/items') return await listItems(url, env);
@@ -156,5 +167,10 @@ export default {
       }
     }
     return env.ASSETS.fetch(req);
+  },
+
+  // 1時間ごとにドライブを確認して、新しい写真フォルダを取り込む
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(syncDrive(env).catch((e) => console.error('写真の取り込みに失敗', e.message)));
   },
 };

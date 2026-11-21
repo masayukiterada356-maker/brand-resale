@@ -96,6 +96,8 @@ async function viewItem(id) {
     setHeader(it.mgmt_no, 'items', true);
     const details = Object.entries(it.details || {});
     $view.innerHTML = `
+      ${it.photos.length ? `<div class="gallery">${it.photos.map((p) => `<img src="/api/photos/img/${esc(p.drive_id)}?s=800" alt="" loading="lazy">`).join('')}</div>
+        <p class="note">外注さんの写真（${esc(it.photos[0].date_label)} の ${esc(it.photos[0].number)} 番・${it.photos.length}枚）・<a href="#/photos/${esc(it.photos[0].folder_id)}">割り当てを変える</a></p>` : ''}
       ${it.supplier_images.length ? `<div class="gallery">${it.supplier_images.map((u) => `<img src="${esc(u)}" alt="" loading="lazy">`).join('')}</div>
         <p class="note">仕入れ先の写真（確認用）</p>` : ''}
       <div class="card">
@@ -255,6 +257,160 @@ async function runCommit() {
   }
 }
 
+/* ---------- 写真の割り当て ---------- */
+let photoFilter = 'unassigned';
+
+async function refreshBadge() {
+  try {
+    const d = await api('/api/photos/folders?status=unassigned');
+    const b = document.getElementById('photo-badge');
+    const n = d.counts?.unassigned || 0;
+    b.textContent = n; b.hidden = !n;
+  } catch { /* 写真がまだ設定されていない時は出さない */ }
+}
+
+const fmtTime = (s) => {
+  if (!s) return 'まだ確認していません';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  return `最後の確認：${d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+};
+
+async function viewPhotos() {
+  setHeader('写真の割り当て', 'photos');
+  $view.innerHTML = `
+    <div class="bar"><span class="note" id="synced">…</span><button class="btn small ghost" id="sync">ドライブを確認</button></div>
+    <div class="seg" id="seg">
+      <button data-f="unassigned">未割り当て</button><button data-f="assigned">割り当て済み</button><button data-f="ignored">対象外</button>
+    </div>
+    <div id="folders"></div>`;
+  document.querySelectorAll('#seg button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.f === photoFilter);
+    b.addEventListener('click', () => { photoFilter = b.dataset.f; viewPhotos(); });
+  });
+  document.getElementById('sync').addEventListener('click', async (ev) => {
+    ev.target.disabled = true; ev.target.textContent = '確認中…';
+    try {
+      const r = await api('/api/photos/sync', { method: 'POST' });
+      toast(r.new_folders || r.new_photos ? `新しいフォルダ${r.new_folders}個・写真${r.new_photos}枚を取り込みました` : '新しい写真はありませんでした');
+      await loadFolders(); refreshBadge();
+    } catch (e) { toast(e.message); }
+    ev.target.disabled = false; ev.target.textContent = 'ドライブを確認';
+  });
+  await loadFolders();
+}
+
+async function loadFolders() {
+  const $f = document.getElementById('folders');
+  try {
+    const d = await api('/api/photos/folders?status=' + photoFilter);
+    document.getElementById('synced').textContent = fmtTime(d.synced_at);
+    const segLabels = { unassigned: '未割り当て', assigned: '割り当て済み', ignored: '対象外' };
+    document.querySelectorAll('#seg button').forEach((b) => {
+      const n = d.counts?.[b.dataset.f] || 0;
+      b.textContent = `${segLabels[b.dataset.f]}${n ? ' ' + n : ''}`;
+    });
+    if (!d.folders.length) {
+      $f.innerHTML = `<div class="empty">${photoFilter === 'unassigned'
+        ? (d.synced_at ? '割り当てを待っている写真はありません' : '「ドライブを確認」を押すと、外注さんの写真フォルダを読み込みます')
+        : 'ありません'}</div>`;
+      return;
+    }
+    const groups = [];
+    for (const f of d.folders) {
+      const g = groups.at(-1);
+      if (g && g.label === f.date_label && g.date === f.shoot_date) g.list.push(f);
+      else groups.push({ label: f.date_label, date: f.shoot_date, list: [f] });
+    }
+    $f.innerHTML = groups.map((g) => `
+      <div class="date-h">${esc(g.label)} の撮影・${g.list.length}点</div>
+      <div class="grid">${g.list.map((f) => `
+        <a class="tile ${f.status}" href="#/photos/${esc(f.drive_id)}">
+          ${f.first_photo_id ? `<img src="/api/photos/img/${esc(f.first_photo_id)}?s=300" alt="" loading="lazy">` : '<div class="ph"></div>'}
+          <span class="no">${esc(f.number)}</span>
+          <div class="cap">${f.mgmt_no ? `<span class="mgmt">${esc(f.mgmt_no)}</span>` : `<span>${f.photo_count}枚</span>`}</div>
+        </a>`).join('')}</div>`).join('');
+  } catch (e) {
+    $f.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+async function viewFolder(id) {
+  setHeader('写真', 'photos', true);
+  $view.innerHTML = '<div class="empty">読み込み中…</div>';
+  let d;
+  try { d = await api(`/api/photos/folders/${id}`); } catch (e) { $view.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const f = d.folder;
+  setHeader(`${f.date_label} の ${f.number} 番`, 'photos', true);
+
+  const candRow = (c) => `
+    <button class="cand" data-id="${c.id}">
+      ${c.supplier_thumb ? `<img class="thumb" src="${esc(c.supplier_thumb)}" alt="" loading="lazy">` : '<div class="thumb">写真なし</div>'}
+      <div class="body">
+        <div class="mgmt">${esc(c.mgmt_no)}</div>
+        <div class="brand">${esc(c.brand)}</div>
+        <div class="nm">${esc(itemLabel(c))}</div>
+      </div>
+      <div class="when">仕入れ<br>${esc(c.purchase_date.slice(5).replace('-', '/'))}</div>
+    </button>`;
+
+  $view.innerHTML = `
+    <div class="strip">${d.photos.map((p) => `<img src="/api/photos/img/${esc(p.drive_id)}?s=600" alt="" loading="lazy">`).join('')}</div>
+    <p class="note">${d.photos.length}枚・横にスクロールして全部見られます</p>
+    ${f.status === 'assigned' ? `
+      <div class="card assigned-box">
+        <div><div class="note">割り当て済み</div><div class="mgmt" style="font-size:16px">${esc(f.mgmt_no)}</div></div>
+        <button class="btn small ghost" id="unassign">外す</button>
+      </div>` : f.status === 'ignored' ? `
+      <div class="card assigned-box">
+        <div class="note">対象外にしています</div>
+        <button class="btn small ghost" id="unassign">未割り当てに戻す</button>
+      </div>` : ''}
+    ${f.status !== 'ignored' ? `
+      <div class="card" style="padding-bottom:8px">
+        <h2>${f.status === 'assigned' ? '別の商品に変える' : 'どの商品の写真ですか？'}</h2>
+        <input class="search" id="cq" type="search" placeholder="管理番号・ブランド・商品名で絞り込む" style="margin-bottom:8px">
+        <div class="cands" id="cands"></div>
+      </div>
+      ${f.status === 'unassigned' ? '<button class="linkbtn" id="ignore">在庫の商品ではない（対象外にする）</button>' : ''}` : ''}`;
+
+  const render = (q = '') => {
+    const $c = document.getElementById('cands');
+    if (!$c) return;
+    const k = q.trim().toLowerCase();
+    const list = d.candidates.filter((c) => !k || [c.mgmt_no, c.brand, c.name, c.category, c.model].some((v) => (v || '').toLowerCase().includes(k)));
+    if (!list.length) { $c.innerHTML = `<div class="empty" style="padding:20px">${d.candidates.length ? '合う商品がありません' : '写真のない在庫がありません'}</div>`; return; }
+    const before = list.filter((c) => c.before_shoot);
+    const after = list.filter((c) => !c.before_shoot);
+    $c.innerHTML = before.map(candRow).join('') +
+      (after.length ? `<div class="sep">撮影日（${esc(f.shoot_date)}）より後に仕入れた商品</div>${after.map(candRow).join('')}` : '');
+    $c.querySelectorAll('.cand').forEach((b) => b.addEventListener('click', () => assign(id, Number(b.dataset.id), f)));
+  };
+  render();
+  document.getElementById('cq')?.addEventListener('input', (ev) => render(ev.target.value));
+  document.getElementById('unassign')?.addEventListener('click', async () => {
+    await api(`/api/photos/folders/${id}/assign`, { method: 'POST', body: JSON.stringify({ unassign: true }) });
+    toast('割り当てを外しました'); viewFolder(id); refreshBadge();
+  });
+  document.getElementById('ignore')?.addEventListener('click', async () => {
+    await api(`/api/photos/folders/${id}/assign`, { method: 'POST', body: JSON.stringify({ ignore: true }) });
+    toast('対象外にしました'); location.hash = '#/photos';
+  });
+}
+
+async function assign(folderId, itemId, f) {
+  try {
+    const r = await api(`/api/photos/folders/${folderId}/assign`, { method: 'POST', body: JSON.stringify({ item_id: itemId }) });
+    toast(`${f.date_label} の ${f.number} 番 → ${r.mgmt_no}`);
+    refreshBadge();
+    // 次の未割り当てへ進む
+    const d = await api('/api/photos/folders?status=unassigned');
+    const next = d.folders.find((x) => x.drive_id !== folderId);
+    location.hash = next ? `#/photos/${next.drive_id}` : '#/photos';
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
 /* ---------- 画面の切り替え ---------- */
 function route() {
   const h = location.hash || '#/';
@@ -262,7 +418,11 @@ function route() {
   window.scrollTo(0, 0);
   if (m) return viewItem(m[1]);
   if (h === '#/import') return viewImport();
+  const pm = /^#\/photos\/([\w-]+)$/.exec(h);
+  if (pm) return viewFolder(pm[1]);
+  if (h === '#/photos') return viewPhotos();
   return viewItems();
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { route(); refreshBadge(); });
 route();
+refreshBadge();

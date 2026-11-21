@@ -16,5 +16,16 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "r2_buckets": [
+    { "binding": "PHOTOS", "bucket_name": "brand-resale-photos" }
+  ],
+  "vars": {
+    // 外注さんの共有フォルダ「寺田 将之さん」
+    "DRIVE_ROOT_FOLDER_ID": "1351D_voeNntH7PIP3KGBtPPqQVd23s4y",
+    // この日以降に作られた日付フォルダだけ取り込む（それより前の写真は今のやり方で出品済みのため）
+    "PHOTO_SYNC_FROM": "2026-11-01"
+  },
+  // 1時間ごとにドライブを確認
+  "triggers": { "crons": ["17 * * * *"] }
 }
