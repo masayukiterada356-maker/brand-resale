@@ -1,0 +1,6 @@
+node_modules/
+config.json
+logs/
+work/
+last-error.txt
+test/fake-sites/posted_*.json

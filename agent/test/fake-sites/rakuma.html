@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><title>出品 - ラクマ（練習用）</title>
+<main>
+  <input type="file" multiple id="f">
+  <input name="itemName"> <textarea name="detail"></textarea>
+  <div>カテゴリ <button id="catb">指定なし</button></div>
+  <div>ブランド <button id="brb">指定なし</button></div>
+  <select name="status"><option value="">-</option><option value="5">新品</option><option value="4">未使用に近い</option><option value="6">目立った傷や汚れなし</option><option value="3">やや</option></select>
+  <select name="carriage"><option value="">-</option><option value="1">送料込み</option><option value="2">着払い</option></select>
+  <select name="deliveryMethod"><option>らくらくメルカリ便</option><option>かんたんラクマパック（ヤマト運輸）</option><option>かんたんラクマパック</option></select>
+  <select name="deliveryDate"><option value="">-</option><option value="1">1〜2日</option><option value="2">2〜3日</option></select>
+  <select name="deliveryArea"><option value="1">北海道</option><option value="23">愛知県</option></select>
+  <select name="requestRequired"><option value="1">あり</option><option value="0">なし</option></select>
+  <input name="sellPrice">
+  <button id="pub">出品する</button><button id="dr">下書きに保存する</button>
+</main>
+<div id="dlg"></div>
+<script src="/common.js"></script>
+<script>
+const S = { cat: [], brand: '' };
+catb.onclick = () => open([]);
+function open(path) {
+  let node = FAKE.tree; for (const p of path) node = node[p];
+  const list = Array.isArray(node) ? node : Object.keys(node);
+  dlg.innerHTML = `<div role="dialog">${list.map(x => `<button>${x}</button>`).join('')}</div>`;
+  dlg.querySelectorAll('button').forEach((b, i) => b.onclick = () => {
+    const next = [...path, list[i]];
+    if (Array.isArray(node)) { S.cat = next; dlg.innerHTML = ''; catb.textContent = next.join(' > '); } else open(next);
+  });
+}
+brb.onclick = () => {
+  dlg.innerHTML = '<div role="dialog"><input placeholder="ブランド名で検索" id="q"><div class="css-1c4l09m" id="r"></div></div>';
+  q.oninput = () => { r.innerHTML = FAKE.brands.filter(b => b.toLowerCase().includes(q.value.toLowerCase())).map(b => `<button>${b}</button>`).join('');
+    r.querySelectorAll('button').forEach(b => b.onclick = () => { S.brand = b.textContent; brb.textContent = S.brand; dlg.innerHTML = ''; }); };
+};
+f.onchange = () => S.photos = f.files.length;
+pub.onclick = () => fetch('/__save', { method: 'POST', body: JSON.stringify({ ERROR: '出品するが押された' }) });
+dr.onclick = async () => {
+  const v = (n) => document.querySelector(`[name=${n}]`).value;
+  await fetch('/__save', { method: 'POST', body: JSON.stringify({ ...S, name: v('itemName'), desc: v('detail'), status: v('status'), carriage: v('carriage'),
+    method: v('deliveryMethod'), date: v('deliveryDate'), area: v('deliveryArea'), req: v('requestRequired'), price: v('sellPrice') }) });
+  history.pushState({}, '', '/draft?status=created');
+};
+</script>

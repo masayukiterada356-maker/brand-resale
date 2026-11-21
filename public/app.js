@@ -341,14 +341,40 @@ async function loadListing(it) {
   const $l = document.getElementById('listing');
   if (!$l) return;
   try {
-    const { listing } = await api(`/api/items/${it.id}/listing`);
-    renderListing(it, listing);
+    const { listing, drafts } = await api(`/api/items/${it.id}/listing`);
+    renderListing(it, listing, drafts);
   } catch (e) {
     $l.innerHTML = `<div class="card note">${esc(e.message)}</div>`;
   }
 }
 
-function renderListing(it, l) {
+const PLATFORM_NAME = { mercari: 'メルカリ', rakuma: 'ラクマ', yahoo: 'ヤフーフリマ' };
+
+function draftsHtml(l, drafts = []) {
+  if (!l.ready) return '';
+  const by = Object.fromEntries(drafts.map((d) => [d.platform, d]));
+  const waiting = !it_hasPhotos;
+  return `
+    <div class="drafts">
+      <h2>フリマの下書き</h2>
+      ${Object.entries(PLATFORM_NAME).map(([k, name]) => {
+        const d = by[k];
+        const chip = !d ? `<span class="chip skipped">${waiting ? '写真待ち' : '作成待ち'}</span>`
+          : d.status === 'drafted' ? '<span class="chip ok">下書き済み</span>'
+          : `<span class="chip conflict">失敗${d.attempts >= 3 ? '（止めています）' : `（${d.attempts}回目）`}</span>`;
+        return `<div class="drow">
+          <div class="dname">${name}</div>${chip}
+          ${d ? `<button class="linkbtn" data-reset="${k}">やり直す</button>` : ''}
+          ${d?.message ? `<div class="dmsg ${d.status === 'error' || /要確認/.test(d.message) ? 'warn' : ''}">${esc(d.message)}</div>` : ''}
+        </div>`;
+      }).join('')}
+      <p class="note">自宅PCのプログラムが毎晩作ります。下書きを確認して、各フリマで公開してください。</p>
+    </div>`;
+}
+let it_hasPhotos = false;
+
+function renderListing(it, l, drafts = []) {
+  it_hasPhotos = !!(it.photos.length && (it.thumb_version || viewItem.current?.thumb_version));
   const $l = document.getElementById('listing');
   if (!$l) return;
   if (!l) {
@@ -386,7 +412,13 @@ function renderListing(it, l) {
         <button class="btn ghost" id="l-regen">作り直す</button>
       </div>
       ${l.ready ? '<button class="linkbtn" id="l-unready">未確認に戻す</button>' : '<p class="note">「確認して保存」した商品が、フリマの下書き作成の対象になります。</p>'}
+      ${draftsHtml(l, drafts)}
     </div>`;
+  $l.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm(`${PLATFORM_NAME[b.dataset.reset]}の下書きを、次の夜にもう一度作ります。前の下書きはフリマ側で消しておいてください。よろしいですか？`)) return;
+    await api(`/api/items/${it.id}/drafts/reset`, { method: 'POST', body: JSON.stringify({ platform: b.dataset.reset }) });
+    toast('やり直しにしました'); loadListing(it);
+  }));
 
   const $t = document.getElementById('l-title');
   const $d = document.getElementById('l-desc');
@@ -414,7 +446,7 @@ function renderListing(it, l) {
         body: JSON.stringify({ title: $t.value, condition: document.getElementById('l-cond').value, description: $d.value, price: $p.value, ready }),
       });
       toast(ready ? '確認済みにしました' : '保存しました');
-      renderListing(it, r.listing);
+      renderListing(it, r.listing, r.drafts);
     } catch (e) { toast(e.message); }
   };
   document.getElementById('l-ok').addEventListener('click', () => save(true));
@@ -429,8 +461,8 @@ async function generateListing(it) {
   const $l = document.getElementById('listing');
   $l.innerHTML = '<div class="card"><h2>出品文</h2><p class="note">Geminiが写真を見て作っています…（10〜20秒ほど）</p></div>';
   try {
-    const { listing } = await api(`/api/items/${it.id}/listing/generate`, { method: 'POST' });
-    renderListing(it, listing);
+    const { listing, drafts } = await api(`/api/items/${it.id}/listing/generate`, { method: 'POST' });
+    renderListing(it, listing, drafts);
   } catch (e) {
     toast(e.message);
     loadListing(it);

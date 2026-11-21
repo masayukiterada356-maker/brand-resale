@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>出品 - Yahoo!フリマ（練習用）</title>
+<main>
+  <input type="file" multiple id="f">
+  <input placeholder="商品名を入力してください（必須）" id="nm">
+  <textarea placeholder="商品の説明" id="ds"></textarea>
+  <div>カテゴリ <p id="catp">選択してください（必須）</p></div>
+  <input placeholder="ブランドを入力して選択（任意）" id="br"><ul id="sug" role="listbox"></ul>
+  <div>商品の状態 <p id="condp">選択してください（必須）</p></div>
+  <input type="tel" id="pr">
+  <button id="pub">出品する</button><button id="dr">下書きに保存する</button>
+</main>
+<div id="dlg"></div>
+<script src="/common.js"></script>
+<script>
+const S = { cat: [], brand: '', cond: '' };
+f.onchange = () => S.photos = f.files.length;
+catp.onclick = () => open([]);
+function open(path) {
+  let node = FAKE.tree; for (const p of path) node = node[p];
+  const list = Array.isArray(node) ? node : Object.keys(node);
+  dlg.innerHTML = `<div role="dialog"><ul>${list.map(x => `<li>${x}</li>`).join('')}</ul></div>`;
+  dlg.querySelectorAll('li').forEach((li, i) => li.onclick = () => {
+    const next = [...path, list[i]];
+    if (Array.isArray(node)) { S.cat = next; dlg.innerHTML = ''; catp.textContent = next.join(' > '); } else open(next);
+  });
+}
+condp.onclick = () => {
+  dlg.innerHTML = `<div role="dialog"><ul>${['新品、未使用','未使用に近い','目立った傷や汚れなし','やや傷や汚れあり'].map(x => `<li>${x}</li>`).join('')}</ul></div>`;
+  dlg.querySelectorAll('li').forEach(li => li.onclick = () => { S.cond = li.textContent; condp.textContent = S.cond; dlg.innerHTML = ''; });
+};
+br.oninput = () => { sug.innerHTML = FAKE.brands.filter(b => b.toLowerCase().includes(br.value.toLowerCase())).map(b => `<li>${b}</li>`).join('');
+  sug.querySelectorAll('li').forEach(li => li.onclick = () => { S.brand = li.textContent; br.value = S.brand; sug.innerHTML = ''; }); };
+pub.onclick = () => fetch('/__save', { method: 'POST', body: JSON.stringify({ ERROR: '出品するが押された' }) });
+dr.onclick = async () => {
+  await fetch('/__save', { method: 'POST', body: JSON.stringify({ ...S, name: nm.value, desc: ds.value, price: pr.value }) });
+  location.href = 'https://paypayfleamarket.yahoo.co.jp/sell';
+};
+</script>

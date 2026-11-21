@@ -3,6 +3,7 @@
 import { buildPreview } from './import.js';
 import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
 import { handleListings } from './listings.js';
+import { handleAgent, agentAuthorized, resetDraft } from './agent.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -152,6 +153,10 @@ export default {
 
     if (pathname.startsWith('/api/')) {
       try {
+        const ar = await handleAgent(req, env, url);
+        if (ar) return ar;
+        const dr = /^\/api\/items\/(\d+)\/drafts\/reset$/.exec(pathname);
+        if (m === 'POST' && dr) return await resetDraft(Number(dr[1]), (await req.json().catch(() => ({}))).platform, env);
         const lr = await handleListings(req, env, url);
         if (lr) return lr;
         if (pathname.startsWith('/api/photos/')) {

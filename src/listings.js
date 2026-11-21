@@ -27,9 +27,11 @@ async function itemImages(env, item, n) {
 
 async function getListing(itemId, env) {
   const l = await env.DB.prepare('SELECT * FROM listings WHERE item_id = ?').bind(itemId).first();
-  if (!l) return json({ listing: null });
+  if (!l) return json({ listing: null, drafts: [] });
   delete l.ai_raw;
-  return json({ listing: l });
+  const { results: drafts } = await env.DB
+    .prepare('SELECT platform, status, message, attempts, updated_at FROM listing_drafts WHERE item_id = ?').bind(itemId).all();
+  return json({ listing: l, drafts });
 }
 
 async function generate(itemId, env) {
@@ -46,14 +48,14 @@ async function generate(itemId, env) {
   const prev = await env.DB.prepare('SELECT price FROM listings WHERE item_id = ?').bind(itemId).first();
 
   await env.DB.prepare(`INSERT INTO listings
-      (item_id, title, rank_label, condition, category, description, ai_price, ai_price_reason, price, ai_raw, ready, generated_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
+      (item_id, title, rank_label, condition, target, category, description, ai_price, ai_price_reason, price, ai_raw, ready, generated_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
       ON CONFLICT(item_id) DO UPDATE SET
-        title = excluded.title, rank_label = excluded.rank_label, condition = excluded.condition,
+        title = excluded.title, rank_label = excluded.rank_label, condition = excluded.condition, target = excluded.target,
         category = excluded.category, description = excluded.description, ai_price = excluded.ai_price,
         ai_price_reason = excluded.ai_price_reason, ai_raw = excluded.ai_raw, ready = 0,
         generated_at = excluded.generated_at, updated_at = excluded.updated_at`)
-    .bind(itemId, ai.title, ai.rank_label, condition, ai.category, description,
+    .bind(itemId, ai.title, ai.rank_label, condition, ai.target || 'レディース', ai.category, description,
       Number(ai.price) || null, ai.price_reason || '', prev?.price ?? (Number(ai.price) || null),
       JSON.stringify(ai), )
     .run();
@@ -73,8 +75,13 @@ async function save(itemId, req, env) {
   if (price != null && (!Number.isFinite(price) || price < 300 || price > 9999999)) return fail('価格が正しくありません');
   if (b.ready && !price) return fail('価格を入れてください');
   await env.DB.prepare(`UPDATE listings SET title = ?, condition = ?, description = ?, price = ?, ready = ?,
-      updated_at = datetime('now') WHERE item_id = ?`)
-    .bind(title, b.condition, String(b.description || ''), price, b.ready ? 1 : 0, itemId).run();
+      target = COALESCE(?, target), category = COALESCE(?, category), updated_at = datetime('now') WHERE item_id = ?`)
+    .bind(title, b.condition, String(b.description || ''), price, b.ready ? 1 : 0,
+      b.target || null, b.category ? String(b.category).trim() : null, itemId).run();
+  // 出品文を直したら、まだ公開していない下書きは作り直しの対象にする
+  if (b.ready) {
+    await env.DB.prepare("DELETE FROM listing_drafts WHERE item_id = ? AND status = 'error'").bind(itemId).run();
+  }
   return getListing(itemId, env);
 }
 

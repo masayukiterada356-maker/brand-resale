@@ -1,0 +1,16 @@
+{
+  "name": "flea-draft-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "自宅PCのChromeで、メルカリ・ラクマ・ヤフーフリマに写真付きの下書きを作る",
+  "scripts": {
+    "login": "node agent.mjs login",
+    "run": "node agent.mjs run",
+    "check": "node agent.mjs check",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

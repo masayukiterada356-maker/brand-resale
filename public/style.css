@@ -228,3 +228,12 @@ b.over, .over { color: var(--bad) !important; }
 .ai-price .linkbtn { padding: 0; margin-left: 4px; color: var(--text); }
 .lbtns { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
 .item .right .chip { display: inline-block; margin-top: 4px; }
+
+/* ---------- フリマの下書き ---------- */
+.drafts { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.drafts h2 { margin-bottom: 6px; }
+.drow { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; padding: 6px 0; }
+.drow .dname { font-weight: 600; font-size: 14px; }
+.drow .linkbtn { padding: 0; }
+.drow .dmsg { grid-column: 1 / -1; font-size: 12px; color: var(--sub); }
+.drow .dmsg.warn { color: var(--warn); }

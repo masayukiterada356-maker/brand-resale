@@ -1,0 +1,10 @@
+{
+  "appUrl": "https://brand-resale.あなたのアカウント.workers.dev",
+  "agentToken": "Cloudflareに設定した AGENT_TOKEN と同じ合言葉",
+  "cfAccessClientId": "",
+  "cfAccessClientSecret": "",
+  "profileDir": "C:\\flea-agent\\chrome-profile",
+  "maxItemsPerRun": 5,
+  "platforms": ["mercari", "rakuma", "yahoo"],
+  "waitBetweenItemsSec": [60, 180]
+}

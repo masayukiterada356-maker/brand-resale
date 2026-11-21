@@ -66,7 +66,8 @@ const LISTING_SCHEMA = {
     title: { type: 'STRING', description: '出品タイトル。40文字以内' },
     rank_label: { type: 'STRING', enum: RANK_LABELS },
     condition: { type: 'STRING', enum: CONDITIONS },
-    category: { type: 'STRING', description: '例：バッグ / トートバッグ' },
+    target: { type: 'STRING', enum: ['レディース', 'メンズ', 'ユニセックス'] },
+    category: { type: 'STRING', description: 'フリマのカテゴリ。大分類 / 小分類。例：バッグ / トートバッグ、アクセサリー / ネックレス、財布 / 長財布' },
     keywords: { type: 'STRING' },
     condition_text: { type: 'STRING' },
     intro: { type: 'STRING' },
@@ -74,7 +75,7 @@ const LISTING_SCHEMA = {
     price: { type: 'INTEGER', description: 'メルカリでの推奨価格（円）' },
     price_reason: { type: 'STRING' },
   },
-  required: ['title', 'rank_label', 'condition', 'category', 'keywords', 'condition_text', 'intro', 'details', 'price', 'price_reason'],
+  required: ['title', 'rank_label', 'condition', 'target', 'category', 'keywords', 'condition_text', 'intro', 'details', 'price', 'price_reason'],
 };
 
 const EXAMPLE = `【タイトルの例】
@@ -186,7 +187,8 @@ function mockListing(item) {
     title: `【${rank}】${kana} ${item.name || ''} ${item.category || ''}`.replace(/\s+/g, ' ').trim().slice(0, 40),
     rank_label: rank,
     condition: item.rank === '未使用' ? '新品、未使用' : '未使用に近い',
-    category: item.category || 'バッグ',
+    target: 'レディース',
+    category: /ネックレス|リング|ピアス/.test(item.category) ? `アクセサリー / ${item.category}` : /財布/.test(item.category) ? '財布 / 長財布' : `バッグ / ${item.category || 'その他'}`,
     keywords: `${item.brand} ${kana} ${item.name || ''} ${item.category || ''}（ダミー）`,
     condition_text: `${item.notes ? item.notes.trim() + 'が見られますが、' : ''}全体的に綺麗な${rank}（ABランク）です。${item.accessories ? item.accessories + '付。' : ''}（ダミーの文です）`,
     intro: `${item.brand}（${kana}）の${item.name || item.category}です。\nこれはGeminiの鍵を入れる前のダミーの文です。\n本番ではGeminiが写真を見て作ります。`,

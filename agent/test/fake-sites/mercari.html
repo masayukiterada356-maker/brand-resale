@@ -1,0 +1,49 @@
+<!doctype html><meta charset="utf-8"><title>出品 - メルカリ（練習用）</title>
+<main id="m"></main>
+<script>
+const S = { photos: 0, cat: [], brand: '', cond: '', name: '', desc: '', price: '' };
+function form() {
+  history.pushState({}, '', '/sell/create');
+  document.getElementById('m').innerHTML = `
+    <h1>商品の情報を入力</h1>
+    <input type="file" multiple accept="image/*" id="f"><span id="pc">${S.photos}枚</span>
+    <div><a href="#" id="cat">${S.cat.length ? S.cat.join(' > ') : 'カテゴリーを選択する'}</a></div>
+    ${S.cat.length ? `<div><a href="#" id="brand">${S.brand || 'ブランド'}</a></div>` : ''}
+    <label>商品の状態<select name="itemCondition"><option value="">選択してください</option>
+      ${['新品、未使用','未使用に近い','目立った傷や汚れなし','やや傷や汚れあり','傷や汚れあり','全体的に状態が悪い'].map(o=>`<option ${o===S.cond?'selected':''}>${o}</option>`).join('')}</select></label>
+    <label for="nm">商品名</label><input name="name" id="nm" value="${S.name}">
+    <label for="ds">商品の説明</label><textarea name="description" id="ds">${S.desc}</textarea>
+    <select name="shippingFromArea"><option>北海道</option><option>愛知県</option></select>
+    <select name="shippingDuration"><option>1~2日で発送</option><option>2~3日で発送</option></select>
+    <label for="pr">販売価格</label><input name="price" id="pr" value="${S.price}">
+    <button id="sell">出品する</button> <button id="draft">下書きに保存する</button>`;
+  f.onchange = () => { S.photos = f.files.length; pc.textContent = S.photos + '枚'; };
+  document.getElementById('cat').onclick = (e) => { e.preventDefault(); cats([]); };
+  const b = document.getElementById('brand'); if (b) b.onclick = (e) => { e.preventDefault(); brands(); };
+  document.querySelector('[name=itemCondition]').onchange = (e) => S.cond = e.target.value;
+  nm.oninput = (e) => S.name = e.target.value; ds.oninput = (e) => S.desc = e.target.value; pr.oninput = (e) => S.price = e.target.value;
+  sell.onclick = () => { document.title = 'PUBLISHED!!'; fetch('/__save', { method: 'POST', body: JSON.stringify({ ERROR: '出品するが押された' }) }); };
+  draft.onclick = async () => {
+    await fetch('/__save', { method: 'POST', body: JSON.stringify({ ...S, area: document.querySelector('[name=shippingFromArea]').value, days: document.querySelector('[name=shippingDuration]').value }) });
+    history.pushState({}, '', '/mypage/drafts'); document.getElementById('m').innerHTML = '<h1>下書き一覧</h1>';
+  };
+}
+function cats(path) {
+  history.pushState({}, '', '/sell/categories');
+  let node = FAKE.tree; for (const p of path) node = node[p];
+  const list = Array.isArray(node) ? node : Object.keys(node);
+  document.getElementById('m').innerHTML = '<h1>カテゴリー</h1>' + list.map(x => `<a href="#">${x}</a><br>`).join('');
+  document.querySelectorAll('main a').forEach((a, i) => a.onclick = (e) => {
+    e.preventDefault(); const next = [...path, list[i]];
+    if (Array.isArray(node)) { S.cat = next; form(); } else cats(next);
+  });
+}
+function brands() {
+  history.pushState({}, '', '/sell/brands');
+  document.getElementById('m').innerHTML = '<input type="search" id="q"><ul id="r"></ul>';
+  q.oninput = () => { r.innerHTML = FAKE.brands.filter(b => b.toLowerCase().includes(q.value.toLowerCase())).map(b => `<li>${b}</li>`).join('');
+    r.querySelectorAll('li').forEach(li => li.onclick = () => { S.brand = li.textContent; form(); }); };
+}
+</script>
+<script src="/common.js"></script>
+<script>form();</script>
