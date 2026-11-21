@@ -135,7 +135,7 @@ async function assignFolder(id, req, env) {
       env.DB.prepare("UPDATE photo_folders SET status = ?, item_id = NULL, assigned_at = NULL WHERE drive_id = ?")
         .bind(body.ignore ? 'ignored' : 'unassigned', id),
       env.DB.prepare('UPDATE photos SET item_id = NULL WHERE folder_id = ?').bind(id),
-      ...(folder.item_id ? [env.DB.prepare(`UPDATE items SET thumb_photo_id = NULL, updated_at = datetime('now')
+      ...(folder.item_id ? [env.DB.prepare(`UPDATE items SET thumb_photo_id = NULL, thumb_version = NULL, updated_at = datetime('now')
           WHERE id = ? AND thumb_photo_id IN (SELECT drive_id FROM photos WHERE folder_id = ?)`).bind(folder.item_id, id)] : []),
     ]);
     return json({ ok: true });
@@ -150,17 +150,23 @@ async function assignFolder(id, req, env) {
     return fail(`${item.mgmt_no} にはすでに ${other.date_label} の ${other.number} 番の写真が割り当てられています`, 409);
   }
 
+  // 別の商品から付け替える時は、前の商品のサムネイルを外す
+  if (folder.item_id && folder.item_id !== itemId) {
+    await env.DB.prepare("UPDATE items SET thumb_photo_id = NULL, thumb_version = NULL, updated_at = datetime('now') WHERE id = ?")
+      .bind(folder.item_id).run();
+  }
   await env.DB.batch([
     env.DB.prepare("UPDATE photo_folders SET status = 'assigned', item_id = ?, assigned_at = datetime('now') WHERE drive_id = ?")
       .bind(itemId, id),
     env.DB.prepare('UPDATE photos SET item_id = ? WHERE folder_id = ?').bind(itemId, id),
   ]);
-  return json({ ok: true, mgmt_no: item.mgmt_no });
+  const first = await env.DB.prepare('SELECT drive_id FROM photos WHERE folder_id = ? ORDER BY position LIMIT 1').bind(id).first();
+  return json({ ok: true, mgmt_no: item.mgmt_no, item_id: itemId, first_photo_id: first?.drive_id || null });
 }
 
 // 写真を小さくして返す。一度読んだらR2に置いておき、次からはそこから返す
 async function photoImage(fileId, url, env) {
-  const size = Math.min(Math.max(Number(url.searchParams.get('s')) || 400, 100), 1600);
+  const size = Math.min(Math.max(Number(url.searchParams.get('s')) || 400, 100), 2000);
   const known = await env.DB.prepare('SELECT 1 FROM photos WHERE drive_id = ?').bind(fileId).first();
   if (!known) return fail('見つかりません', 404);
 
@@ -190,4 +196,37 @@ export async function handlePhotos(req, env, url) {
     try { return await photoImage(r[1], url, env); } catch (e) { return fail(e.message, 502); }
   }
   return null;
+}
+
+/* ---------- 黄色い枠のサムネイル ---------- */
+
+// iPhoneで作った枠付き画像（大・小）を受け取って保存する
+export async function saveThumb(itemId, req, env) {
+  const form = await req.formData().catch(() => null);
+  if (!form) return fail('画像が届いていません');
+  const photoId = String(form.get('photo_id') || '');
+  const full = form.get('full');
+  const small = form.get('small');
+  if (!full || !small || typeof full === 'string') return fail('画像が届いていません');
+  if (full.size > 8 * 1024 * 1024) return fail('画像が大きすぎます');
+
+  const photo = await env.DB.prepare('SELECT drive_id FROM photos WHERE drive_id = ? AND item_id = ?').bind(photoId, itemId).first();
+  if (!photo) return fail('この商品の写真ではありません');
+
+  const meta = { httpMetadata: { contentType: 'image/jpeg' } };
+  await env.PHOTOS.put(`thumbs/${itemId}.jpg`, await full.arrayBuffer(), meta);
+  await env.PHOTOS.put(`thumbs/${itemId}_s.jpg`, await small.arrayBuffer(), meta);
+  const version = Date.now();
+  await env.DB.prepare("UPDATE items SET thumb_photo_id = ?, thumb_version = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(photoId, version, itemId).run();
+  return json({ ok: true, thumb_version: version });
+}
+
+export async function getThumb(itemId, url, env) {
+  const key = url.searchParams.get('size') === 's' ? `thumbs/${itemId}_s.jpg` : `thumbs/${itemId}.jpg`;
+  const obj = await env.PHOTOS.get(key);
+  if (!obj) return fail('サムネイルがまだありません', 404);
+  return new Response(obj.body, {
+    headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=31536000, immutable' },
+  });
 }

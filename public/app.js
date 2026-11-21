@@ -1,3 +1,5 @@
+import { makeFramedThumb } from './frame.js';
+
 // 画面（iPhone中心）。#/ 在庫一覧、#/item/123 商品、#/import 取り込み
 
 const $view = document.getElementById('view');
@@ -95,8 +97,22 @@ async function viewItem(id) {
     const it = await api(`/api/items/${id}`);
     setHeader(it.mgmt_no, 'items', true);
     const details = Object.entries(it.details || {});
+    viewItem.current = it;
     $view.innerHTML = `
-      ${it.photos.length ? `<div class="gallery">${it.photos.map((p) => `<img src="/api/photos/img/${esc(p.drive_id)}?s=800" alt="" loading="lazy">`).join('')}</div>
+      ${it.photos.length ? `
+      <div class="card thumb-card">
+        <div class="thumb-big" id="thumb-big">${it.thumb_version
+          ? `<img src="/api/items/${it.id}/thumb?v=${it.thumb_version}" alt="サムネイル">`
+          : '<div class="ph">サムネイルを作っています…</div>'}</div>
+        <div>
+          <h2>サムネイル</h2>
+          <p class="note">下の写真をタップすると、その写真に黄色い枠を付けて差し替えます</p>
+        </div>
+      </div>
+      <div class="gallery pick">${it.photos.map((p) => `
+        <button class="pick-btn ${p.drive_id === (it.thumb_photo_id || it.photos[0].drive_id) ? 'on' : ''}" data-photo="${esc(p.drive_id)}">
+          <img src="/api/photos/img/${esc(p.drive_id)}?s=800" alt="" loading="lazy"><span>${p.position}</span>
+        </button>`).join('')}</div>
         <p class="note">外注さんの写真（${esc(it.photos[0].date_label)} の ${esc(it.photos[0].number)} 番・${it.photos.length}枚）・<a href="#/photos/${esc(it.photos[0].folder_id)}">割り当てを変える</a></p>` : ''}
       ${it.supplier_images.length ? `<div class="gallery">${it.supplier_images.map((u) => `<img src="${esc(u)}" alt="" loading="lazy">`).join('')}</div>
         <p class="note">仕入れ先の写真（確認用）</p>` : ''}
@@ -128,8 +144,45 @@ async function viewItem(id) {
           ${details.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}
         </dl>
       </div>`;
+    $view.querySelectorAll('.pick-btn').forEach((b) => b.addEventListener('click', async () => {
+      if (b.classList.contains('on') && it.thumb_version) return;
+      $view.querySelectorAll('.pick-btn').forEach((x) => x.classList.toggle('on', x === b));
+      await setThumb(it.id, b.dataset.photo, true);
+    }));
+    // 写真はあるのにサムネイルがまだない時は、1枚目で作る
+    if (it.photos.length && !it.thumb_version) await setThumb(it.id, it.photos[0].drive_id, false);
   } catch (e) {
     $view.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+// 写真に黄色い枠を付けて保存する
+async function createThumb(itemId, photoId) {
+  const { full, small } = await makeFramedThumb(`/api/photos/img/${photoId}?s=2000`);
+  const form = new FormData();
+  form.append('photo_id', photoId);
+  form.append('full', full, 'thumb.jpg');
+  form.append('small', small, 'thumb_s.jpg');
+  const res = await fetch(`/api/items/${itemId}/thumb`, { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'サムネイルを保存できませんでした');
+  return data.thumb_version;
+}
+
+async function setThumb(itemId, photoId, announce) {
+  const box = document.getElementById('thumb-big');
+  if (box) box.classList.add('busy');
+  try {
+    const v = await createThumb(itemId, photoId);
+    if (box && viewItem.current?.id === itemId) {
+      box.innerHTML = `<img src="/api/items/${itemId}/thumb?v=${v}" alt="サムネイル">`;
+      viewItem.current.thumb_version = v;
+    }
+    if (announce) toast('サムネイルを差し替えました');
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    if (box) box.classList.remove('busy');
   }
 }
 
@@ -402,6 +455,8 @@ async function assign(folderId, itemId, f) {
     const r = await api(`/api/photos/folders/${folderId}/assign`, { method: 'POST', body: JSON.stringify({ item_id: itemId }) });
     toast(`${f.date_label} の ${f.number} 番 → ${r.mgmt_no}`);
     refreshBadge();
+    // 1枚目に黄色い枠を付けてサムネイルにする（画面は先に進める）
+    if (r.first_photo_id) createThumb(r.item_id, r.first_photo_id).catch((e) => toast(`サムネイル：${e.message}`));
     // 次の未割り当てへ進む
     const d = await api('/api/photos/folders?status=unassigned');
     const next = d.folders.find((x) => x.drive_id !== folderId);

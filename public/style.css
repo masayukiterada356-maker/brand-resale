@@ -195,3 +195,16 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .cand .when { font-size: 12px; color: var(--sub); flex: none; text-align: right; }
 .sep { font-size: 12px; color: var(--sub); margin: 12px 2px 6px; }
 .linkbtn { border: 0; background: none; color: var(--sub); text-decoration: underline; font-size: 13px; padding: 8px 0; cursor: pointer; }
+
+/* ---------- サムネイル ---------- */
+.thumb-card { display: flex; gap: 14px; align-items: center; }
+.thumb-big { flex: none; width: 44%; max-width: 220px; aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: var(--mute-soft); transition: opacity .2s; }
+.thumb-big img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.thumb-big .ph { display: grid; place-items: center; height: 100%; padding: 8px; text-align: center; font-size: 12px; color: var(--sub); }
+.thumb-big.busy { opacity: .45; }
+.thumb-card h2 { margin-bottom: 4px; }
+.gallery.pick { margin-bottom: 6px; }
+.pick-btn { position: relative; flex: none; width: 38%; max-width: 200px; padding: 0; border: 3px solid transparent; border-radius: 12px; background: none; cursor: pointer; scroll-snap-align: start; }
+.pick-btn img { width: 100%; max-width: none; border-radius: 9px; display: block; }
+.pick-btn.on { border-color: var(--accent); }
+.pick-btn span { position: absolute; top: 6px; left: 6px; min-width: 22px; height: 22px; border-radius: 11px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; font-weight: 700; line-height: 22px; text-align: center; }

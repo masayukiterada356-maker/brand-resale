@@ -1,7 +1,7 @@
 // Cloudflare Worker：/api/* はここで処理し、それ以外は public/ の画面を返す
 
 import { buildPreview } from './import.js';
-import { handlePhotos, syncDrive } from './photos.js';
+import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -108,6 +108,7 @@ async function listItems(url, env) {
   }
   const sql = `SELECT i.id, i.mgmt_no, i.supplier_code, s.name AS supplier_name, i.purchase_date,
       i.brand, i.category, i.name, i.model, i.rank, i.cost, i.status, i.supplier_images_json,
+      i.thumb_version,
       COALESCE(i.thumb_photo_id, (SELECT p.drive_id FROM photos p WHERE p.item_id = i.id ORDER BY p.folder_id, p.position LIMIT 1)) AS photo_id,
       CAST(julianday('now', '+9 hours') - julianday(i.purchase_date) AS INTEGER) AS days
     FROM items i JOIN suppliers s ON s.code = i.supplier_code
@@ -117,7 +118,8 @@ async function listItems(url, env) {
   const items = results.map((r) => {
     const imgs = JSON.parse(r.supplier_images_json || '[]');
     delete r.supplier_images_json;
-    const thumb = r.photo_id ? `/api/photos/img/${r.photo_id}?s=200` : imgs[0] || null;
+    const thumb = r.thumb_version ? `/api/items/${r.id}/thumb?size=s&v=${r.thumb_version}`
+      : r.photo_id ? `/api/photos/img/${r.photo_id}?s=200` : imgs[0] || null;
     return { ...r, thumb };
   });
   const totals = await env.DB
@@ -157,6 +159,9 @@ export default {
         if (m === 'GET' && pathname === '/api/items') return await listItems(url, env);
         const im = /^\/api\/items\/(\d+)$/.exec(pathname);
         if (m === 'GET' && im) return await getItem(Number(im[1]), env);
+        const tm = /^\/api\/items\/(\d+)\/thumb$/.exec(pathname);
+        if (m === 'POST' && tm) return await saveThumb(Number(tm[1]), req, env);
+        if (m === 'GET' && tm) return await getThumb(Number(tm[1]), url, env);
         if (m === 'GET' && pathname === '/api/suppliers') {
           const { results } = await env.DB.prepare('SELECT * FROM suppliers ORDER BY rowid').all();
           return json(results);
