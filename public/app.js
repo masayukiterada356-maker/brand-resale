@@ -198,16 +198,24 @@ function decodeBytes(buf) {
 }
 
 const STATUS_LABEL = { ok: '登録する', conflict: '番号が重なる', duplicate: '登録済み', skipped: '対象外' };
-const SUPPLIER_NAME = { R: 'コメ兵オークション', E: 'エコリング' };
+const SUPPLIER_NAME = { R: 'コメ兵オークション', E: 'エコリング', N: 'エレノス', C: 'サイファー' };
+let importMode = 'csv';
 
 function viewImport() {
   setHeader('取り込み', 'import');
   $view.innerHTML = `
     <div class="card">
+      <div class="seg" id="mode">
+        <button data-m="csv" class="${importMode === 'csv' ? 'on' : ''}">CSVファイル</button>
+        <button data-m="mail" class="${importMode === 'mail' ? 'on' : ''}">メールを貼り付け</button>
+      </div>
+      ${importMode === 'csv' ? `
       <label class="file ${imp.filename ? 'has' : ''}" id="file-label">
         <input type="file" id="file" accept=".csv,text/csv">
-        <span id="file-name">${imp.filename ? esc(imp.filename) : '仕入れ先のCSVを選ぶ'}</span>
-      </label>
+        <span id="file-name">${imp.filename ? esc(imp.filename) : 'コメ兵・エコリングのCSVを選ぶ'}</span>
+      </label>` : `
+      <label class="field"><span>エレノス・サイファーの注文メールの本文</span>
+        <textarea id="mail" rows="7" placeholder="注文確認メールの「注文概要」や「商品詳細」の部分を貼り付けてください">${imp.filename === 'メール' ? esc(imp.text) : ''}</textarea></label>`}
       <label class="field" style="margin-top:12px">
         <span>仕入れ日（管理番号の年・月になります）</span>
         <input type="date" id="date" value="${imp.date}">
@@ -216,7 +224,18 @@ function viewImport() {
     </div>
     <div id="result"></div>`;
 
-  document.getElementById('file').addEventListener('change', async (ev) => {
+  document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => {
+    if (importMode === b.dataset.m) return;
+    importMode = b.dataset.m;
+    Object.assign(imp, { text: '', filename: '', overrides: {}, preview: null });
+    viewImport();
+  }));
+  document.getElementById('mail')?.addEventListener('input', (ev) => {
+    imp.text = ev.target.value; imp.filename = 'メール'; imp.overrides = {}; imp.preview = null;
+    document.getElementById('go').disabled = !imp.text.trim();
+    document.getElementById('result').innerHTML = '';
+  });
+  document.getElementById('file')?.addEventListener('change', async (ev) => {
     const f = ev.target.files[0];
     if (!f) return;
     imp.text = decodeBytes(await f.arrayBuffer());
@@ -267,7 +286,7 @@ function renderPreview() {
       ${p.rows.map((r) => `
         <div class="prow ${r.status}">
           <div class="line1">
-            <span class="mgmt">${esc(r.mgmt_no || r.supplier_ref)}</span>
+            <span class="mgmt">${esc(r.mgmt_no || `${p.prefix}？（${r.supplier_ref}）`)}</span>
             <span class="chip ${r.status}">${STATUS_LABEL[r.status]}</span>
           </div>
           ${r.brand !== undefined ? `
@@ -277,7 +296,7 @@ function renderPreview() {
           </div>` : ''}
           ${r.message ? `<div class="msg">${esc(r.message)}</div>` : ''}
           ${r.status === 'conflict' || imp.overrides[r.line] ? `
-            <input type="text" data-line="${r.line}" placeholder="管理番号を入力" value="${esc(imp.overrides[r.line] || '')}" autocapitalize="characters" autocomplete="off">` : ''}
+            <input type="text" data-line="${r.line}" placeholder="管理番号（数字だけなら ${esc(p.prefix)} を自動で付けます）" value="${esc(imp.overrides[r.line] || '')}" autocapitalize="characters" autocomplete="off">` : ''}
         </div>`).join('')}
       <div class="total"><span>登録する${s.ok}点の仕入れ値</span><span>${yen(s.total_cost)}</span></div>
       <button class="btn" id="commit" ${s.ok ? '' : 'disabled'}>${s.ok}点を登録する</button>

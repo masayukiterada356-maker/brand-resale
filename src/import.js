@@ -5,8 +5,11 @@ import { parseCsv, toRecords } from './csv.js';
 import { prefixFor } from './codes.js';
 import * as komehyo from './suppliers/komehyo.js';
 import * as ecoring from './suppliers/ecoring.js';
+import * as elenoss from './suppliers/elenoss.js';
+import * as cypher from './suppliers/cypher.js';
 
 const PARSERS = [komehyo, ecoring];
+const TEXT_PARSERS = [elenoss, cypher]; // メール本文を貼り付けて読む仕入れ先
 
 export function detectSupplier(header) {
   return PARSERS.find((p) => p.detect(header)) || null;
@@ -20,23 +23,29 @@ export function detectSupplier(header) {
  * @param {object} overrides 行番号→手で直した管理番号
  */
 export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) {
-  const rows = parseCsv(text);
-  if (rows.length === 0) throw new Error('CSVが空です');
-  const header = rows[0].map((h) => h.trim());
-  const parser = detectSupplier(header);
-  if (!parser) {
-    throw new Error('この形式のCSVはまだ読めません（今はコメ兵・エコリングに対応）');
+  if (!text || !text.trim()) throw new Error('中身が空です');
+  let parser = TEXT_PARSERS.find((t) => t.detectText(text));
+  let parsed;
+  if (parser) {
+    parsed = parser.parseText(text);
+    if (!parsed.length) throw new Error('メールから商品を読み取れませんでした');
+  } else {
+    const rows = parseCsv(text);
+    const header = rows[0].map((h) => h.trim());
+    parser = detectSupplier(header);
+    if (!parser) {
+      throw new Error('この形式はまだ読めません（コメ兵・エコリングのCSV、エレノス・サイファーのメールに対応）');
+    }
+    parsed = toRecords(header, rows.slice(1)).map((rec) => parser.parseRecord(rec));
   }
 
   const prefix = prefixFor(parser.code, purchaseDate);
   const usedMgmt = new Set(existing.mgmtNos || []);
   const usedRefs = new Set(existing.refs || []);
-  const records = toRecords(header, rows.slice(1));
 
   const out = [];
-  records.forEach((rec, i) => {
-    const line = i + 2; // CSVの行番号（見出しが1行目）
-    const p = parser.parseRecord(rec);
+  parsed.forEach((p, i) => {
+    const line = i + 2; // 行の番号（CSVでは見出しが1行目）
     if (p.silent) return;
     const base = { line, supplier_ref: p.supplier_ref };
 
@@ -51,7 +60,9 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     let mgmt = null;
     let status = 'ok';
     let message = '';
-    const override = overrides[line]?.trim();
+    let override = overrides[line]?.trim().toUpperCase();
+    // 数字だけ入れた時は、頭の3文字（例：CFK）を自動で付ける
+    if (override && /^\d[\d-]*$/.test(override)) override = prefix + override;
 
     if (override) {
       if (usedMgmt.has(override)) { status = 'conflict'; message = `${override} はすでにあります`; }
@@ -63,7 +74,9 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
         if (!usedMgmt.has(cand)) { mgmt = cand; break; }
         tried.push(cand);
       }
-      if (!mgmt) {
+      if (!mgmt && !p.number_candidates.length) {
+        status = 'conflict';
+      } else if (!mgmt) {
         status = 'conflict';
         message = `${tried[0]} はすでにあります。管理番号を決めてください`;
       } else if (tried.length) {
@@ -72,11 +85,11 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     }
 
     if (mgmt) { usedMgmt.add(mgmt); usedRefs.add(refKey); }
-    const warn = (p.warnings || []).join(' / ');
+    const warn = (p.warnings || []).filter((w) => !(mgmt && w === '管理番号を入力してください')).join(' / ');
     out.push({
       ...base,
       ...p,
-      mgmt_no: mgmt || (prefix + p.number_candidates[0]),
+      mgmt_no: mgmt || (p.number_candidates.length ? prefix + p.number_candidates[0] : ''),
       status,
       message: [message, warn].filter(Boolean).join(' / '),
     });
@@ -85,6 +98,7 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
   const count = (s) => out.filter((r) => r.status === s).length;
   return {
     supplier_code: parser.code,
+    prefix,
     purchase_date: purchaseDate,
     rows: out,
     summary: {

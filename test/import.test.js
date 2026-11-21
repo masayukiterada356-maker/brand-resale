@@ -99,3 +99,62 @@ test('成立していない行は取り込まない', () => {
   const p = buildPreview(csv, '2026-11-21');
   assert.equal(p.rows[0].status, 'skipped');
 });
+
+const ELENOSS = `注文概要
+	E4784 エルメス メドールXO ST0283 ネックレス メタル×バッファローホーン シルバー × 1
+¥59,000
+
+小計
+
+¥59,000
+配送
+
+¥0
+税金合計
+
+¥5,364
+合計
+
+¥59,000 JPY`;
+
+test('エレノス：メールから管理番号と仕入れ値', () => {
+  const p = buildPreview(ELENOSS, '2026-10-20');
+  assert.equal(p.supplier_code, 'N');
+  assert.equal(p.rows.length, 1);
+  assert.equal(p.rows[0].mgmt_no, 'NFJ4784');
+  assert.equal(p.rows[0].cost, 59000);
+  assert.equal(p.rows[0].brand, 'HERMES');
+  assert.equal(p.rows[0].status, 'ok');
+});
+
+const CYPHER = `［　商　品　詳　細　］
+--------------------------------
+【　商　品　番　号　】S-00048
+【　商　　品　　名　】S-00048 ルイヴィトン モンクレール ヴァレンティノガラヴァーニ アパレル５点セット
+【　価　格　(税込)　】88,500円
+【　　税　　　率　　】10%
+【　　数　　　量　　】1
+【　　小　　　計　　】88,500円
+--------------------------------
+【　商　品　合　計　】88,500円
+【　　送　　　料　　】1,500円（税込）
+【配　送　先　合　計】90,000円
+================================
+【　総　　合　　計　】90,000円`;
+
+test('サイファー：メールを読み、管理番号は入力してもらう', () => {
+  const p = buildPreview(CYPHER, '2026-11-21');
+  assert.equal(p.supplier_code, 'C');
+  assert.equal(p.rows[0].status, 'conflict');
+  assert.equal(p.rows[0].cost, 90000);
+  assert.equal(p.rows[0].brand, 'LOUIS VUITTON');
+  const fixed = buildPreview(CYPHER, '2026-11-21', {}, { 2: '9155' });
+  assert.equal(fixed.rows[0].mgmt_no, 'CFK9155');
+  assert.equal(fixed.rows[0].status, 'ok');
+});
+
+test('サイファー：「商品番号」の行から貼り付けても読める', () => {
+  const p = buildPreview(CYPHER.slice(CYPHER.indexOf('【　商　品　番　号')), '2026-11-21');
+  assert.equal(p.rows.length, 1);
+  assert.equal(p.rows[0].supplier_ref, 'S-00048');
+});
