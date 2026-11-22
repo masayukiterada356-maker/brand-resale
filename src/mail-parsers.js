@@ -12,8 +12,18 @@ function mercari(text) {
   return { platform: 'メルカリ', external_id: id || null, title, price: yen(field(text, '商品価格')) };
 }
 
-// ラクマ・ヤフーフリマは、実物のメールを見てから足す
-export const MAIL_PARSERS = [mercari];
+// ラクマ：「購入者より代金のお支払いがありました」のメールで売れたとみなす
+// （オーダーIDは注文の番号で、商品の番号ではないので「order:」を付けて区別する）
+function rakuma(text) {
+  if (!/ラクマ/.test(text) || !/代金のお支払いがありました|購入されました/.test(text)) return null;
+  const title = field(text, '商品名');
+  if (!title) return null;
+  const order = field(text, 'オーダーID');
+  return { platform: 'ラクマ', external_id: order ? `order:${order}` : null, title, price: yen(field(text, '商品価格')) };
+}
+
+// ヤフーフリマは、実物のメールを見てから足す
+export const MAIL_PARSERS = [mercari, rakuma];
 
 export function parseSoldMail(text) {
   const t = String(text || '').replace(/\r\n/g, '\n');

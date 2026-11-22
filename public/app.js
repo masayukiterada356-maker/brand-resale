@@ -487,7 +487,7 @@ async function viewSoldInbox() {
   $view.innerHTML = `
     <div class="card">
       <h2>売れた通知メールを貼り付ける</h2>
-      <p class="note" style="margin-top:0">メルカリの「購入しました」メールの本文を貼り付けると、どの商品かを探して記録します。（Gmailとつないだ後は自動になります）</p>
+      <p class="note" style="margin-top:0">メルカリの「購入しました」、ラクマの「代金のお支払いがありました」メールの本文を貼り付けると、どの商品かを探して記録します。（Gmailとつないだ後は自動になります）</p>
       <textarea id="ib-text" rows="6" placeholder="メールの本文"></textarea>
       <label class="field" style="margin-top:8px"><span>売れた日</span><input type="date" id="ib-date" value="${todayJst()}"></label>
       <button class="btn" id="ib-go">読み取る</button>

@@ -40,3 +40,22 @@ test('Gmailの本文を取り出す（文字の部分→なければHTML）', ()
     { mimeType: 'text/html', body: { data: b64('<p>x</p>') } }] }), '商品名 : テスト');
   assert.equal(bodyText({ mimeType: 'text/html', body: { data: b64('商品ID : m1<br>商品名 : A') } }).trim(), '商品ID : m1\n商品名 : A');
 });
+
+test('ラクマの「代金のお支払いがありました」通知を読む', () => {
+  const r = parseSoldMail(`Griffey様
+
+ラクマをご利用いただきありがとうございます。
+継続中の取引についてラクマよりお知らせです。
+
+下記の商品について購入者より代金のお支払いがありました。
+
+■ 商品情報
+オーダーID : 879843222
+商品名     : 【極美品】グッチ GGサイケデリック　チルドレンズ　 ハンドバッグ　550763
+商品価格   : 73,500円
+購入者様   : Lara`);
+  assert.equal(r.platform, 'ラクマ');
+  assert.equal(r.price, 73500);
+  assert.equal(r.external_id, 'order:879843222');
+  assert.match(r.title, /GGサイケデリック/);
+});

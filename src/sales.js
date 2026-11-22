@@ -123,7 +123,7 @@ async function confirmEvent(env, eventId, itemId) {
 async function pasteNotice(req, env) {
   const b = await req.json().catch(() => ({}));
   const parsed = parseSoldMail(b.text);
-  if (!parsed) return fail('売れた通知のメールとして読めませんでした（今はメルカリに対応）');
+  if (!parsed) return fail('売れた通知のメールとして読めませんでした（今はメルカリ・ラクマに対応）');
   if (!parsed.price) return fail('価格が読み取れませんでした');
   const day = /^\d{4}-\d{2}-\d{2}$/.test(b.sold_date || '') ? b.sold_date : new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
   return json({ parsed, ...(await handleSoldNotice(env, parsed, { source: 'paste', sold_date: day })) });
