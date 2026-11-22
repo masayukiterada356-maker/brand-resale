@@ -32,11 +32,20 @@ export async function checkGmail(env, { max = 15 } = {}) {
   if (!env.GOOGLE_REFRESH_TOKEN || !env.GMAIL_LABEL) return { skipped: 'Gmailの設定がまだです' };
   const token = await accessToken(env);
   const h = { authorization: `Bearer ${token}` };
-  const q = `label:"${env.GMAIL_LABEL}" newer_than:3d`;
-  const list = await fetch(`${API}/messages?q=${encodeURIComponent(q)}&maxResults=${max}`, { headers: h }).then((r) => r.json());
+  // ラベルは名前ではなく ID で指定する（日本語の名前でも確実に探せるように）
+  const labels = await fetch(`${API}/labels`, { headers: h }).then((r) => r.json());
+  if (labels.error) throw new Error(`Gmailを読めません：${labels.error.message}`);
+  const label = (labels.labels || []).find((l) => l.name === env.GMAIL_LABEL);
+  if (!label) return { skipped: `Gmailにラベル「${env.GMAIL_LABEL}」が見つかりません` };
+  const q = 'newer_than:3d';
+  const list = await fetch(`${API}/messages?labelIds=${encodeURIComponent(label.id)}&q=${encodeURIComponent(q)}&maxResults=${max}`, { headers: h }).then((r) => r.json());
   if (list.error) throw new Error(`Gmailを読めません：${list.error.message}`);
   const ids = (list.messages || []).map((m) => m.id);
-  if (!ids.length) return { checked: 0 };
+  if (!ids.length) {
+    // ラベルに何通入っているか（直近3日より前のものも含む）も返して、設定の確かめに使う
+    const info = await fetch(`${API}/labels/${label.id}`, { headers: h }).then((r) => r.json()).catch(() => ({}));
+    return { checked: 0, label_total: info.messagesTotal ?? null };
+  }
 
   // すでに処理したメールは読まない
   const { results } = await env.DB.prepare(`SELECT message_id FROM sale_events WHERE message_id IN (${ids.map(() => '?').join(',')})`)

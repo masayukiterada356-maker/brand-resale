@@ -31,6 +31,8 @@ function toast(msg) {
 function setHeader(title, tab, back = false) {
   $title.textContent = title;
   $back.hidden = !back;
+  // 戻るボタンがない画面（一覧などの上の画面）では、左上に歯車の設定ボタンを出す
+  document.getElementById('gear').hidden = back || title === 'ログイン' || title === '設定';
   document.title = title === '在庫' ? '在庫管理' : `${title}｜在庫管理`;
   document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
 }
@@ -55,7 +57,7 @@ async function viewItems() {
     <div class="seg" id="views">${Object.entries(VIEWS).map(([k, v]) => `<button data-v="${k}" class="${k === listView ? 'on' : ''}">${v}</button>`).join('')}</div>
     <input class="search" id="q" type="search" placeholder="管理番号・ブランド・商品名で探す" value="${esc(searchText)}">
     <div class="list" id="list"></div>
-    <p style="text-align:center;margin-top:20px"><a href="#/settings" class="note">設定（パスワード・ログアウト）</a></p>`;
+`;
   document.querySelectorAll('#views button').forEach((b) => b.addEventListener('click', () => {
     listView = b.dataset.v;
     document.querySelectorAll('#views button').forEach((x) => x.classList.toggle('on', x === b));
@@ -1110,7 +1112,7 @@ async function viewSettings() {
     try {
       const m = await api('/api/sales/gmail-check', { method: 'POST' });
       const d = await api('/api/photos/sync', { method: 'POST' });
-      toast(`Gmail：${m.skipped || `${m.checked}通（記録 ${m.matched}・確認待ち ${m.pending}）`}／写真：新しいフォルダ ${d.new_folders}個`);
+      toast(`Gmail：${m.skipped || (m.checked ? `直近3日 ${m.checked}通（記録 ${m.matched}・確認待ち ${m.pending}）` : `直近3日の通知なし（ラベルのメール 全${m.label_total ?? '?'}通）`)}／写真：新しいフォルダ ${d.new_folders}個`);
     } catch (e) { toast(e.message); }
     ev.target.disabled = false; ev.target.textContent = '今すぐGmailとドライブを確認する';
   });
