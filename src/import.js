@@ -24,7 +24,10 @@ export function detectSupplier(header) {
  *   { mgmtNos: Set<string>, refs: Set<string>（'R:46-4' の形）}
  * @param {object} overrides 行番号→手で直した管理番号
  */
-export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) {
+// オークションの参加費（税込）。1回の仕入れ（同じ開催日）ごとにかかり、その回の点数で割って仕入れ値に足す
+export const PARTICIPATION_FEE = { R: 1100, K: 1100 };
+
+export function buildPreview(text, purchaseDate, existing = {}, overrides = {}, options = {}) {
   if (!text || !text.trim()) throw new Error('中身が空です');
   let parser = TEXT_PARSERS.find((t) => t.detectText(text));
   let parsed;
@@ -107,9 +110,31 @@ export function buildPreview(text, purchaseDate, existing = {}, overrides = {}) 
     });
   });
 
+  // 参加費を割り振る（登録する商品と、番号を決めれば登録できる商品が対象）
+  const fee = options.participation === false ? 0 : (PARTICIPATION_FEE[parser.code] || 0);
+  if (fee) {
+    const groups = new Map();
+    for (const r of out.filter((x) => x.status === 'ok' || x.status === 'conflict')) {
+      const k = r.purchase_date;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    for (const [day, rows] of groups) {
+      const each = Math.floor(fee / rows.length);
+      rows.forEach((r, i) => {
+        const part = each + (i === 0 ? fee - each * rows.length : 0);
+        r.cost += part;
+        r.participation_fee = part;
+        r.details = { ...r.details, 参加費: `${part.toLocaleString()}円（${day}の${rows.length}点で${fee.toLocaleString()}円を割り振り）` };
+      });
+    }
+  }
+
   const count = (s) => out.filter((r) => r.status === s).length;
   return {
     supplier_code: parser.code,
+    participation_fee: fee,
+    participation_available: !!PARTICIPATION_FEE[parser.code],
     prefix: defaultPrefix,
     purchase_date: purchaseDate,
     rows: out,

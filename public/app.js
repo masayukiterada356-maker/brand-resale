@@ -266,7 +266,7 @@ async function setThumb(itemId, photoId, announce) {
 }
 
 /* ---------- CSV取り込み ---------- */
-const imp = { text: '', filename: '', date: todayJst(), overrides: {}, preview: null };
+const imp = { text: '', filename: '', date: todayJst(), overrides: {}, preview: null, participation: true };
 
 function decodeBytes(buf) {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
@@ -306,7 +306,7 @@ function viewImport() {
   document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => {
     if (importMode === b.dataset.m) return;
     importMode = b.dataset.m;
-    Object.assign(imp, { text: '', filename: '', overrides: {}, preview: null });
+    Object.assign(imp, { text: '', filename: '', overrides: {}, preview: null, participation: true });
     viewImport();
   }));
   document.getElementById('mail')?.addEventListener('input', (ev) => {
@@ -406,7 +406,7 @@ async function runPreview() {
   try {
     imp.preview = await api('/api/import/preview', {
       method: 'POST',
-      body: JSON.stringify({ text: imp.text, purchase_date: imp.date, overrides: imp.overrides }),
+      body: JSON.stringify({ text: imp.text, purchase_date: imp.date, overrides: imp.overrides, participation: imp.participation }),
     });
     renderPreview();
   } catch (e) {
@@ -443,6 +443,7 @@ function renderPreview() {
           ${r.status === 'conflict' || imp.overrides[r.line] || /前の管理表/.test(r.message || '') ? `
             <input type="text" data-line="${r.line}" placeholder="管理番号（数字だけなら ${esc(p.prefix)} を自動で付けます）" value="${esc(imp.overrides[r.line] || '')}" autocapitalize="characters" autocomplete="off">` : ''}
         </div>`).join('')}
+      ${p.participation_available ? `<label class="check"><input type="checkbox" id="pfee" ${imp.participation ? 'checked' : ''}> 参加費 1,100円を含める（${s.ok + s.conflict}点で割り振り）</label>` : ''}
       <div class="total"><span>登録する${s.ok}点の仕入れ値</span><span>${yen(s.total_cost)}</span></div>
       <button class="btn" id="commit" ${s.ok ? '' : 'disabled'}>${s.ok}点を登録する</button>
       ${s.conflict ? '<p class="note">番号が重なる商品は、管理番号を入れると登録できます。入れなければ今回は登録しません。</p>' : ''}
@@ -456,6 +457,7 @@ function renderPreview() {
     });
   });
   document.getElementById('commit').addEventListener('click', runCommit);
+  document.getElementById('pfee')?.addEventListener('change', (ev) => { imp.participation = ev.target.checked; runPreview(); });
 }
 
 async function runCommit() {
@@ -465,10 +467,10 @@ async function runCommit() {
   try {
     const res = await api('/api/import/commit', {
       method: 'POST',
-      body: JSON.stringify({ text: imp.text, filename: imp.filename, purchase_date: imp.date, overrides: imp.overrides }),
+      body: JSON.stringify({ text: imp.text, filename: imp.filename, purchase_date: imp.date, overrides: imp.overrides, participation: imp.participation }),
     });
     toast(`${res.inserted}点を登録しました`);
-    Object.assign(imp, { text: '', filename: '', overrides: {}, preview: null });
+    Object.assign(imp, { text: '', filename: '', overrides: {}, preview: null, participation: true });
     location.hash = '#/';
   } catch (e) {
     toast(e.message);

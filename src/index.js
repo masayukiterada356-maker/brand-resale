@@ -43,7 +43,7 @@ async function importPreview(req, env) {
   if (err) return fail(err);
   try {
     const existing = await loadExisting(env.DB);
-    return json(buildPreview(body.text, body.purchase_date, existing, body.overrides || {}));
+    return json(buildPreview(body.text, body.purchase_date, existing, body.overrides || {}, { participation: body.participation !== false }));
   } catch (e) {
     return fail(e.message);
   }
@@ -57,7 +57,7 @@ async function importCommit(req, env) {
   let preview;
   try {
     // 画面から届いた結果は使わず、サーバーでもう一度計算する
-    preview = buildPreview(body.text, body.purchase_date, await loadExisting(env.DB), body.overrides || {});
+    preview = buildPreview(body.text, body.purchase_date, await loadExisting(env.DB), body.overrides || {}, { participation: body.participation !== false });
   } catch (e) {
     return fail(e.message);
   }

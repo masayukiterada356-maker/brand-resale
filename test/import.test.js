@@ -35,7 +35,7 @@ test('ブランド名をそろえる', () => {
 });
 
 test('コメ兵（バッグ）：管理番号と税込の仕入れ値', () => {
-  const p = buildPreview(load('komehyo_bag.csv'), '2026-11-21');
+  const p = buildPreview(load('komehyo_bag.csv'), '2026-11-21', {}, {}, { participation: false });
   assert.equal(p.supplier_code, 'R');
   assert.equal(p.summary.ok, 8);
   const gucci = p.rows[0];
@@ -51,7 +51,7 @@ test('コメ兵（バッグ）：管理番号と税込の仕入れ値', () => {
 });
 
 test('コメ兵（ジュエリー）：列が違っても読める', () => {
-  const p = buildPreview(load('komehyo_jewelry.csv'), '2026-11-21');
+  const p = buildPreview(load('komehyo_jewelry.csv'), '2026-11-21', {}, {}, { participation: false });
   assert.equal(p.summary.ok, 4);
   const hermes = p.rows.find((r) => r.supplier_ref === '481-7');
   assert.equal(hermes.mgmt_no, 'RFK481-7');
@@ -217,7 +217,7 @@ test('ヤフオク：落札メールから管理番号・仕入れ値・ブラ�
 });
 
 test('K-ブランドオフ：開催日で管理番号、箱番号-番号2ケタ', () => {
-  const p = buildPreview(load('brandoff_sjis.csv'), '2026-11-21');
+  const p = buildPreview(load('brandoff_sjis.csv'), '2026-11-21', {}, {}, { participation: false });
   assert.equal(p.supplier_code, 'K');
   assert.equal(p.rows.length, 3);
   const r = p.rows[0];
@@ -227,4 +227,21 @@ test('K-ブランドオフ：開催日で管理番号、箱番号-番号2ケタ'
   assert.equal(r.cost, Math.floor((48000 + 2400) * 1.1));
   assert.equal(p.rows[2].mgmt_no, 'KFI51-08');
   assert.equal(r.category, 'バッグ');      // 半角カナを直す
+});
+
+test('参加費：1回の仕入れで1,100円を点数で割り、端数は1点目に足す', () => {
+  const base = buildPreview(load('komehyo_bag.csv'), '2026-11-21', {}, {}, { participation: false });
+  const p = buildPreview(load('komehyo_bag.csv'), '2026-11-21');
+  // 8点：1,100÷8＝137 余り4 → 1点目 141円、ほか 137円
+  assert.equal(p.rows[0].cost - base.rows[0].cost, 141);
+  assert.equal(p.rows[1].cost - base.rows[1].cost, 137);
+  assert.equal(p.summary.total_cost - base.summary.total_cost, 1100);
+  // ブランドオフ：3点（同じ開催日）
+  const k0 = buildPreview(load('brandoff_sjis.csv'), '2026-11-21', {}, {}, { participation: false });
+  const k = buildPreview(load('brandoff_sjis.csv'), '2026-11-21');
+  assert.equal(k.summary.total_cost - k0.summary.total_cost, 1100);
+  assert.equal(k.rows[0].cost - k0.rows[0].cost, 368);
+  // エコリングには参加費がない
+  const e0 = buildPreview(load('ecoring_sjis.csv'), '2026-09-20');
+  assert.equal(e0.rows[0].cost, 97900);
 });

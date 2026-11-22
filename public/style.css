@@ -254,3 +254,6 @@ b.over, .over { color: var(--bad) !important; }
 
 .banner { display: block; text-decoration: none; color: var(--text); font-size: 14px; padding: 12px 14px; margin-bottom: 10px; }
 .banner.warn { border: 1.5px solid var(--accent); background: var(--accent-soft); }
+
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 10px 0 4px; }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }
