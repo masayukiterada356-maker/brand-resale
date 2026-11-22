@@ -7,6 +7,5 @@
   "maxItemsPerRun": 5,
   "platforms": ["mercari", "rakuma", "yahoo"],
   "waitBetweenItemsSec": [60, 180],
-  "priceEndTime": "22:00",
-  "maxPriceDrops": 120
+  "priceDayEnd": "23:59"
 }

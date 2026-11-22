@@ -150,70 +150,138 @@ async function cmdRun(cfg) {
   log('終わりました');
 }
 
-// 毎晩の値下げ：一覧を読む → 計画をもらう → 終わりの時刻まで間隔をあけて1件ずつ100円下げる
-async function cmdPrice(cfg) {
-  const app = new App(cfg);
-  const [eh, em] = String(cfg.priceEndTime || '22:00').split(':').map(Number);
-  const end = new Date(); end.setHours(eh, em || 0, 0, 0);
-  if (end <= new Date()) end.setDate(end.getDate() + (process.env.AGENT_PRICE_NOW ? 0 : 0));
-  const endMs = process.env.AGENT_PRICE_MINUTES ? Date.now() + Number(process.env.AGENT_PRICE_MINUTES) * 60000 : end.getTime();
-  if (endMs <= Date.now()) { log('値下げの時間帯（〜' + (cfg.priceEndTime || '22:00') + '）を過ぎているので、今夜はしません'); return; }
+// 毎晩の値下げ（フリマごとに時間帯と件数が決まっている）
+//   ラクマ 19:00〜20:00・メルカリ 21:00〜22:00・ヤフーフリマ 22:00〜23:00（各50件・ランダム）
+//   PCが動いていなかった時：ラクマ・ヤフーフリマは起動した時から取り戻す（ヤフーフリマが先）。メルカリは手動（アプリに一覧）
+const DEFAULT_RULES = {
+  rakuma:  { start: '19:00', end: '20:00', catchUp: true,  priority: 2 },
+  mercari: { start: '21:00', end: '22:00', catchUp: false, priority: 1 },
+  yahoo:   { start: '22:00', end: '23:00', catchUp: true,  priority: 0 },
+};
+const CATCH_UP_MIN_DEFAULT = 60; // 取り戻す時は、およそ1時間で終わるように間隔をあける
 
-  const ctx = await openBrowser(cfg);
-  const page = ctx.pages()[0] || await ctx.newPage();
+function at(hhmm, base = new Date()) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  const d = new Date(base); d.setHours(h, m || 0, 0, 0); return d.getTime();
+}
+
+async function takeLock() {
+  const file = join(HERE, 'logs', 'price.lock');
+  await mkdir(join(HERE, 'logs'), { recursive: true });
   try {
-    // 1. 出品中の一覧を読んで送る
-    for (const key of cfg.platforms) {
-      const site = SITES[key];
-      if (!site?.listListings) continue;
-      try {
-        const listings = await site.listListings(page);
-        await ensureLoggedIn(page, site);
-        const r = await app.sendListings(site.PLATFORM, listings, listings.length > 0);
-        log(`${site.name}：出品中 ${r.received}件（結び付き ${r.linked}・確認待ち ${r.unlinked}）`);
-      } catch (e) {
-        log(`${site.name}：一覧を読めませんでした ${e.message}`);
-        await screenshot(page, `list_${key}`);
-        if (e instanceof LoginError) throw e;
+    const old = JSON.parse(await readFile(file, 'utf8'));
+    let alive = false;
+    try { process.kill(old.pid, 0); alive = true; } catch { /* 動いていない */ }
+    if (alive && Date.now() - old.at < 6 * 3600e3) return null;
+  } catch { /* ロックなし */ }
+  await writeFile(file, JSON.stringify({ pid: process.pid, at: Date.now() }));
+  return async () => rm(file, { force: true });
+}
+
+async function cmdPrice(cfg) {
+  const release = await takeLock();
+  if (!release) { log('値下げはもう動いています（2つ目は止めます）'); return; }
+  const app = new App(cfg);
+  const rules = { ...DEFAULT_RULES, ...(cfg.priceRules || {}) };
+  const dayEnd = at(cfg.priceDayEnd || '23:59');
+  const keys = cfg.platforms.filter((k) => rules[k] && SITES[k]?.dropPrice);
+  const st = Object.fromEntries(keys.map((k) => [k, { queue: null, remaining: null, deadline: 0, due: 0, listed: false, catchUpFrom: 0 }]));
+
+  const windowOf = (k) => ({ s: at(rules[k].start), e: at(rules[k].end) });
+  const isActive = (k, now) => {
+    const w = windowOf(k);
+    if (now >= w.s && now < w.e) return true;
+    return rules[k].catchUp && now >= w.e && now < dayEnd; // 時間帯を過ぎても残っていれば取り戻す
+  };
+  const deadlineOf = (k, now) => {
+    const w = windowOf(k);
+    if (now < w.e) return w.e;
+    // 取り戻し：ヤフーフリマが先。ラクマは、ヤフーフリマの取り戻しが終わる頃までずらす
+    let from = now;
+    if (k !== 'yahoo' && st.yahoo && isActive('yahoo', now) && (st.yahoo.remaining ?? 1) > 0) from = Math.max(from, st.yahoo.deadline || now);
+    return Math.min(dayEnd, from + (cfg.catchUpMinutes ?? CATCH_UP_MIN_DEFAULT) * 60000);
+  };
+  const schedule = (k, now) => {
+    const x = st[k];
+    x.deadline = deadlineOf(k, now);
+    const gap = Math.max(20000, (x.deadline - now) / ((x.queue?.length || 1) + 1));
+    x.due = now + gap * (0.5 + Math.random());
+  };
+
+  let ctx = null;
+  let page = null;
+  const browser = async () => {
+    if (!ctx) { ctx = await openBrowser(cfg); page = ctx.pages()[0] || await ctx.newPage(); }
+    return page;
+  };
+
+  try {
+    for (;;) {
+      const now = Date.now();
+      if (now >= dayEnd) { log('今日の値下げの時間は終わりました'); break; }
+
+      // 時間帯に入ったフリマの準備（出品中の一覧を読む → 今日の計画）
+      for (const k of keys) {
+        const x = st[k];
+        if (!isActive(k, now) || x.queue) continue;
+        const site = SITES[k];
+        const p = await browser();
+        try {
+          const listings = await site.listListings(p);
+          await ensureLoggedIn(p, site);
+          const r = await app.sendListings(site.PLATFORM, listings, listings.length > 0);
+          log(`${site.name}：出品中 ${r.received}件（結び付き ${r.linked}・確認待ち ${r.unlinked}）`);
+        } catch (e) {
+          log(`${site.name}：一覧を読めませんでした ${e.message}`);
+          await screenshot(p, `list_${k}`);
+          if (e instanceof LoginError) throw e;
+        }
+        const plan = await app.pricePlan(300, site.PLATFORM);
+        x.queue = plan.items;
+        x.remaining = plan.items.length;
+        const w = windowOf(k);
+        log(`${site.name}：今日 ${plan.done_today[site.PLATFORM]}件済み・これから ${plan.items.length}件${now >= w.e ? '（時間帯を過ぎたので取り戻し）' : ''}（下限に到達 ${plan.floor_hits}件）`);
+        schedule(k, Date.now());
       }
-      await sleep(3000 + Math.random() * 3000);
-    }
 
-    // 2. 今夜の計画（1件およそ45秒として、時間内にできる件数だけ）
-    const capacity = Math.max(1, Math.floor((endMs - Date.now()) / 45000));
-    const plan = await app.pricePlan(Math.min(capacity, cfg.maxPriceDrops || 120));
-    log(`値下げ：今夜 ${plan.items.length}件（候補 ${plan.total_candidates}件・下限に到達 ${plan.floor_hits}件）`);
+      // 次にやるもの：予定時刻が一番早いもの（同じなら ヤフーフリマ → メルカリ → ラクマ）
+      const ready = keys.filter((k) => st[k].queue?.length && isActive(k, now));
+      const future = keys.filter((k) => !st[k].queue && windowOf(k).s > now && windowOf(k).s < dayEnd);
+      if (!ready.length && !future.length) { log('今日の値下げは全部終わりました'); break; }
+      if (!ready.length) {
+        const next = Math.min(...future.map((k) => windowOf(k).s));
+        await sleep(Math.min(next - now, 5 * 60000));
+        continue;
+      }
+      ready.sort((a, b) => (st[a].due - st[b].due) || (rules[a].priority - rules[b].priority));
+      const k = ready[0];
+      if (st[k].due > now) { await sleep(Math.min(st[k].due - now, 60000)); continue; }
 
-    // 3. 終わりの時刻まで、間隔をばらつかせながら1件ずつ
-    for (const [n, item] of plan.items.entries()) {
-      const left = endMs - Date.now();
-      if (left < 30000) { log('時間になったので、残りは明日にします'); break; }
-      const site = BY_PLATFORM[item.platform];
+      const item = st[k].queue.shift();
+      const site = SITES[k];
+      const p = await browser();
       try {
-        const r = await site.dropPrice(page, item);
+        const r = await site.dropPrice(p, item);
         if (r.status === 'changed') {
-          log(`  ${item.mgmt_no} ${item.platform}：画面の価格（${r.seen_price}円）が記録と違うので、今夜は下げません`);
+          log(`  ${item.mgmt_no} ${item.platform}：画面の価格（${r.seen_price}円）が記録と違うので、今日は下げません`);
           await app.priceResult({ platform: item.platform, external_id: item.external_id, status: 'changed', seen_price: r.seen_price, old_price: item.current_price, message: '画面の価格が記録と違う' });
         } else {
           log(`  ${item.mgmt_no} ${item.platform}：${item.current_price} → ${item.new_price}円`);
           await app.priceResult({ platform: item.platform, external_id: item.external_id, status: 'done', old_price: item.current_price, new_price: item.new_price });
         }
       } catch (e) {
-        const shot = await screenshot(page, `price_${item.mgmt_no}_${item.platform}`);
+        const shot = await screenshot(p, `price_${item.mgmt_no}_${k}`);
         log(`  ${item.mgmt_no} ${item.platform}：失敗 ${e.message}（${shot}）`);
         await app.priceResult({ platform: item.platform, external_id: item.external_id, status: 'error', old_price: item.current_price, message: e.message }).catch(() => {});
         if (e instanceof LoginError) throw e;
       }
-      const remaining = plan.items.length - n - 1;
-      if (remaining > 0) {
-        const gap = Math.max(5000, (endMs - Date.now()) / (remaining + 1));
-        await sleep(Math.min(gap * (0.5 + Math.random()), Math.max(endMs - Date.now() - 20000, 0)));
-      }
+      st[k].remaining = st[k].queue.length;
+      schedule(k, Date.now());
     }
   } finally {
-    await ctx.close();
+    if (ctx) await ctx.close();
+    await release();
   }
-  log('値下げが終わりました');
 }
 
 async function ensureLoggedIn(page, site) {

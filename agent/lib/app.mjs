@@ -42,7 +42,11 @@ export class App {
     })).json();
   }
 
-  async pricePlan(limit) { return (await this.req(`/api/agent/price-plan?limit=${limit}`)).json(); }
+  async pricePlan(limit, platform) {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (platform) q.set('platform', platform);
+    return (await this.req(`/api/agent/price-plan?${q}`)).json();
+  }
 
   async priceResult(body) {
     await this.req('/api/agent/price-result', {

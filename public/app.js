@@ -75,7 +75,8 @@ async function viewItems() {
     const $b = document.getElementById('price-banner');
     if (!$b || !(d.counts?.linked || d.counts?.unlinked)) return;
     const ln = d.last_night || {};
-    $b.innerHTML = `<a class="card banner ${d.counts.unlinked || d.errors.length ? 'warn' : ''}" href="#/prices">値下げ：昨夜 ${ln.done || 0}件${ln.error ? `・失敗 ${ln.error}件` : ''}
+    const t = d.done_today || {};
+    $b.innerHTML = `<a class="card banner ${d.counts.unlinked || d.errors.length ? 'warn' : ''}" href="#/prices">値下げ（今日）：ラクマ ${t['ラクマ'] || 0}・メルカリ ${t['メルカリ'] || 0}・ヤフー ${t['ヤフーフリマ'] || 0}件${ln.error ? `・失敗 ${ln.error}件` : ''}
       ${d.counts.unlinked ? `／<b>結び付けの確認 ${d.counts.unlinked}件</b>` : ''}${d.counts.floor ? `／下限に到達 ${d.counts.floor}件` : ''}</a>`;
   }).catch(() => {});
   api('/api/sales/inbox').then((d) => {
@@ -565,10 +566,16 @@ async function viewPrices() {
   const ln = d.last_night || {};
   $view.innerHTML = `
     <div class="card">
-      <h2>毎晩の値下げ（21時〜22時・100円ずつ）</h2>
-      <div class="sum"><span class="chip ok">昨夜 ${ln.done || 0}件</span>${ln.changed ? `<span class="chip duplicate">手で変えた価格に合わせた ${ln.changed}件</span>` : ''}${ln.error ? `<span class="chip conflict">失敗 ${ln.error}件</span>` : ''}</div>
-      <p class="note" style="margin:0">出品中の結び付き ${d.counts.linked || 0}件。損益分岐点より下には下げません。1晩で回りきれない分は、次の晩に回します。</p>
+      <h2>毎晩の値下げ（100円ずつ・ランダム）</h2>
+      <table class="be">
+        <tr><th></th><th>時間帯</th><th>今日</th></tr>
+        ${[['ラクマ', '19:00〜20:00'], ['メルカリ', '21:00〜22:00'], ['ヤフーフリマ', '22:00〜23:00']].map(([p, t]) => `
+          <tr><td>${p}</td><td style="text-align:right">${t}</td><td class="yen">${d.done_today?.[p] || 0} / ${d.daily?.[p] || 50}件</td></tr>`).join('')}
+      </table>
+      <div class="sum" style="margin-top:8px">${ln.changed ? `<span class="chip duplicate">手で変えた価格に合わせた ${ln.changed}件</span>` : ''}${ln.error ? `<span class="chip conflict">失敗 ${ln.error}件</span>` : ''}</div>
+      <p class="note" style="margin:0">損益分岐点より下には下げません。PCが動いていなかった日は、ラクマ・ヤフーフリマは起動した時から取り戻します（ヤフーフリマが先）。メルカリは下の一覧から手で下げてください。</p>
     </div>
+    <div id="manual-mercari"></div>
     ${d.unlinked.length ? `<h2 class="date-h">どの商品の出品ですか？（${d.unlinked.length}件）</h2>
       ${d.unlinked.map((u) => `
       <div class="card ai-card">
@@ -587,6 +594,27 @@ async function viewPrices() {
           <div class="right"><div class="yen">${yen(f.price)}</div><div class="days">${esc(f.platform)}・${f.days}日目</div></div></a>`).join('')}</div>
       <p class="note">再出品やインスタ投稿を考える目安です。</p>` : ''}
     ${d.errors.length ? `<h2 class="date-h">失敗（直近3日）</h2><div class="card">${d.errors.map((e) => `<div class="note">${esc(e.created_at.slice(5, 16))} ${esc(e.mgmt_no || '')} ${esc(e.platform)}：${esc(e.message || '')}</div>`).join('')}</div>` : ''}`;
+  // メルカリの手動の値下げ（22時を過ぎても今日の件数が終わっていない時）
+  if ((d.jst_hour >= 22 || d.jst_hour < 5) && (d.done_today?.['メルカリ'] || 0) < (d.daily?.['メルカリ'] || 50)) {
+    api('/api/prices/manual?platform=' + encodeURIComponent('メルカリ')).then((m) => {
+      const $m = document.getElementById('manual-mercari');
+      if (!$m || !m.items.length) return;
+      $m.innerHTML = `<div class="card ai-card">
+        <div class="ai-head"><span class="chip ai">メルカリは手動で</span><span class="note">今日 ${m.done_today}/${m.daily}件</span></div>
+        <p class="note" style="margin-top:0">PCが動いていなかったので、メルカリのアプリで価格を下げて「下げた」を押してください。</p>
+        ${m.items.map((x) => `<div class="drow" style="grid-template-columns:1fr auto auto">
+          <div><div class="mgmt">${esc(x.mgmt_no)}</div><div class="note">${yen(x.current_price)} → <b>${yen(x.new_price)}</b></div></div>
+          ${x.url ? `<a class="linkbtn" href="${esc(x.url)}" target="_blank" rel="noopener">開く</a>` : '<span></span>'}
+          <button class="chip-btn" data-manual="${esc(x.external_id)}">下げた</button></div>`).join('')}
+      </div>`;
+      $m.querySelectorAll('[data-manual]').forEach((b) => b.addEventListener('click', async () => {
+        try {
+          const r = await api('/api/prices/manual', { method: 'POST', body: JSON.stringify({ platform: 'メルカリ', external_id: b.dataset.manual }) });
+          b.textContent = `済 ${yen(r.new_price)}`; b.disabled = true; b.classList.add('on');
+        } catch (e) { toast(e.message); }
+      }));
+    }).catch(() => {});
+  }
   $view.querySelectorAll('[data-item]').forEach((b) => b.addEventListener('click', async () => {
     const mg = b.querySelector('.mgmt').textContent;
     if (!confirm(`この出品を ${mg} に結び付けます。よろしいですか？`)) return;

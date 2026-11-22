@@ -74,14 +74,26 @@ async function receiveListings(req, env) {
   return json({ ok: true, received: seen.size, linked, unlinked });
 }
 
-// 2. 今夜の値下げ計画
-export async function buildPlan(env, limit = 80) {
+// 1日に値下げする件数（フリマごと）
+export const DAILY = { 'メルカリ': 50, 'ラクマ': 50, 'ヤフーフリマ': 50 };
+
+// 今日（日本時間）すでに値下げした件数
+export async function doneToday(env) {
+  const { results } = await env.DB.prepare(`SELECT platform, COUNT(*) AS n FROM price_drops
+      WHERE status IN ('done', 'changed') AND date(created_at, '+9 hours') = ? GROUP BY platform`).bind(today()).all();
+  return Object.fromEntries(PLATFORMS.map((p) => [p, results.find((r) => r.platform === p)?.n || 0]));
+}
+
+// 2. 今日の値下げ計画（フリマごと。1日の件数から、今日すでに下げた分を引いた数まで）
+export async function buildPlan(env, limit = 80, platform = null) {
   const day = today();
+  const done = await doneToday(env);
   const { results } = await env.DB.prepare(`SELECT pl.platform, pl.external_id, pl.price, pl.url, pl.last_drop_at, pl.item_id,
         i.cost, i.category, i.name, i.ship_type, i.mgmt_no, l.title AS listing_title
       FROM platform_listings pl JOIN items i ON i.id = pl.item_id LEFT JOIN listings l ON l.item_id = i.id
       WHERE pl.status = 'active' AND i.status != 'sold' AND pl.price IS NOT NULL
-        AND (pl.last_drop_at IS NULL OR pl.last_drop_at < ?)`).bind(day).all();
+        AND (? IS NULL OR pl.platform = ?)
+        AND (pl.last_drop_at IS NULL OR pl.last_drop_at < ?)`).bind(platform, platform, day).all();
   const plan = [];
   const floorHits = [];
   for (const r of results) {
@@ -94,11 +106,17 @@ export async function buildPlan(env, limit = 80) {
     await env.DB.batch(floorHits.map((r) => env.DB.prepare(`UPDATE platform_listings SET floor_hit_at = COALESCE(floor_hit_at, ?)
         WHERE platform = ? AND external_id = ?`).bind(day, r.platform, r.external_id)));
   }
-  // 前に値下げした日が古いものを先に。その中はランダム
-  plan.sort((a, b) => (a.last_drop_at || '').localeCompare(b.last_drop_at || '') || Math.random() - 0.5);
-  const chosen = plan.slice(0, limit);
+  // 前に値下げした日が古いものを先に（同じ日の中はランダム）。フリマごとに今日の残りの件数まで
+  for (let i = plan.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [plan[i], plan[j]] = [plan[j], plan[i]]; }
+  plan.sort((a, b) => (a.last_drop_at || '').localeCompare(b.last_drop_at || ''));
+  const left = Object.fromEntries(PLATFORMS.map((p) => [p, Math.max(DAILY[p] - done[p], 0)]));
+  const chosen = [];
+  for (const it of plan) {
+    if (chosen.length >= limit) break;
+    if (left[it.platform] > 0) { chosen.push(it); left[it.platform]--; }
+  }
   for (let i = chosen.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [chosen[i], chosen[j]] = [chosen[j], chosen[i]]; }
-  return { date: day, step: STEP, total_candidates: plan.length, floor_hits: floorHits.length, items: chosen };
+  return { date: day, step: STEP, daily: DAILY, done_today: done, total_candidates: plan.length, floor_hits: floorHits.length, items: chosen };
 }
 
 // 3. 1件ごとの結果
@@ -125,7 +143,8 @@ async function receiveResult(req, env) {
 export async function handlePriceAgent(req, env, url) {
   if (url.pathname === '/api/agent/listings' && req.method === 'POST') return receiveListings(req, env);
   if (url.pathname === '/api/agent/price-plan' && req.method === 'GET') {
-    return json(await buildPlan(env, Math.min(Number(url.searchParams.get('limit')) || 80, 300)));
+    const pf = url.searchParams.get('platform');
+    return json(await buildPlan(env, Math.min(Number(url.searchParams.get('limit')) || 80, 300), PLATFORMS.includes(pf) ? pf : null));
   }
   if (url.pathname === '/api/agent/price-result' && req.method === 'POST') return receiveResult(req, env);
   return null;
@@ -153,7 +172,11 @@ async function overview(env) {
       WHERE pl.status = 'active' AND pl.floor_hit_at IS NOT NULL AND i.status != 'sold' ORDER BY pl.floor_hit_at DESC LIMIT 100`).all();
   const { results: errors } = await env.DB.prepare(`SELECT d.platform, d.message, d.created_at, i.mgmt_no FROM price_drops d
       LEFT JOIN items i ON i.id = d.item_id WHERE d.status = 'error' AND d.created_at >= datetime('now', '-3 days') ORDER BY d.id DESC LIMIT 30`).all();
+  const nowJst = new Date(Date.now() + 9 * 3600e3);
   return json({
+    done_today: await doneToday(env),
+    daily: DAILY,
+    jst_hour: nowJst.getUTCHours(),
     last_night: Object.fromEntries(last.map((r) => [r.status, r.n])),
     counts,
     unlinked: unlinked.map((u) => ({ ...u, candidates: JSON.parse(u.candidates_json || '[]').map((c) => ({ ...byId[c.id], score: c.score })).filter((c) => c.id) })),
@@ -178,8 +201,36 @@ async function link(req, env) {
   return json({ ok: true });
 }
 
+// 手動の値下げ（PCが動いていなかった日のメルカリ）：今日の残りの一覧と、「下げた」の記録
+async function manualList(env, platform) {
+  const plan = await buildPlan(env, 300, platform);
+  return json({ platform, done_today: plan.done_today[platform], daily: DAILY[platform], items: plan.items });
+}
+async function manualDone(req, env) {
+  const b = await req.json().catch(() => ({}));
+  if (!PLATFORMS.includes(b.platform) || !b.external_id) return fail('内容が正しくありません');
+  const row = await env.DB.prepare(`SELECT pl.price, pl.item_id, pl.last_drop_at, i.cost, i.category, i.name, i.ship_type
+      FROM platform_listings pl JOIN items i ON i.id = pl.item_id WHERE pl.platform = ? AND pl.external_id = ?`).bind(b.platform, b.external_id).first();
+  if (!row) return fail('出品が見つかりません', 404);
+  if (row.last_drop_at === today()) return fail('今日はもう値下げしています');
+  const next = row.price - STEP;
+  const floor = breakEven(row).platforms[b.platform]?.price ?? 0;
+  if (next < floor) return fail(`損益分岐点（${floor.toLocaleString()}円）を下回るので下げられません`);
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO price_drops (platform, external_id, item_id, old_price, new_price, status, message)
+        VALUES (?, ?, ?, ?, ?, 'done', '手動')`).bind(b.platform, b.external_id, row.item_id, row.price, next),
+    env.DB.prepare('UPDATE platform_listings SET price = ?, last_drop_at = ? WHERE platform = ? AND external_id = ?').bind(next, today(), b.platform, b.external_id),
+  ]);
+  return json({ ok: true, new_price: next });
+}
+
 export async function handlePrices(req, env, url) {
   if (url.pathname === '/api/prices' && req.method === 'GET') return overview(env);
+  if (url.pathname === '/api/prices/manual' && req.method === 'GET') {
+    const pf = url.searchParams.get('platform') || 'メルカリ';
+    return PLATFORMS.includes(pf) ? manualList(env, pf) : fail('フリマの名前が正しくありません');
+  }
+  if (url.pathname === '/api/prices/manual' && req.method === 'POST') return manualDone(req, env);
   if (url.pathname === '/api/prices/link' && req.method === 'POST') return link(req, env);
   const m = /^\/api\/items\/(\d+)\/listings$/.exec(url.pathname);
   if (m && req.method === 'GET') {
