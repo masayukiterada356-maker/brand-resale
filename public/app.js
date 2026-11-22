@@ -862,7 +862,7 @@ async function viewPhotos() {
     ev.target.disabled = true; ev.target.textContent = '確認中…';
     try {
       const r = await api('/api/photos/sync', { method: 'POST' });
-      toast(r.new_folders || r.new_photos ? `新しいフォルダ${r.new_folders}個・写真${r.new_photos}枚を取り込みました` : '新しい写真はありませんでした');
+      toast(`${r.scanned ?? r.folders}フォルダを確認：新しいフォルダ${r.new_folders}個・写真${r.new_photos}枚${r.remaining ? `（残り${r.remaining}フォルダは、もう一度押すと続きを読みます）` : ''}`);
       await loadFolders(); refreshBadge();
     } catch (e) { toast(e.message); }
     ev.target.disabled = false; ev.target.textContent = 'ドライブを確認';
@@ -894,13 +894,18 @@ async function loadFolders() {
     }
     $f.innerHTML = groups.map((g) => `
       <div class="date-h">${esc(g.label)} の撮影・${g.list.length}点
-        ${photoFilter === 'unassigned' ? `<button class="linkbtn" data-ignore-date="${esc(g.dateId)}" data-label="${esc(g.label)}" style="float:right;padding:0">まとめて対象外</button>` : ''}</div>
+        ${photoFilter === 'unassigned' ? `<button class="linkbtn" data-ignore-date="${esc(g.dateId)}" data-label="${esc(g.label)}" style="float:right;padding:0">まとめて対象外</button>` : ''}
+        ${photoFilter === 'ignored' ? `<button class="linkbtn" data-restore-date="${esc(g.dateId)}" data-label="${esc(g.label)}" style="float:right;padding:0">まとめて未割り当てに戻す</button>` : ''}</div>
       <div class="grid">${g.list.map((f) => `
         <a class="tile ${f.status}" href="#/photos/${esc(f.drive_id)}">
           ${f.first_photo_id ? `<img src="/api/photos/img/${esc(f.first_photo_id)}?s=300" alt="" loading="lazy">` : '<div class="ph"></div>'}
           <span class="no">${esc(f.number)}</span>
           <div class="cap">${f.mgmt_no ? `<span class="mgmt">${esc(f.mgmt_no)}</span>` : `<span>${f.photo_count}枚</span>`}</div>
         </a>`).join('')}</div>`).join('');
+    $f.querySelectorAll('[data-restore-date]').forEach((b) => b.addEventListener('click', async () => {
+      const r = await api(`/api/photos/dates/${b.dataset.restoreDate}/restore`, { method: 'POST' });
+      toast(`${r.restored}個を未割り当てに戻しました`); loadFolders(); refreshBadge();
+    }));
     $f.querySelectorAll('[data-ignore-date]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`${b.dataset.label} の撮影分を、まとめて対象外にします（すでに出品済みの撮影分など）。よろしいですか？`)) return;
       const r = await api(`/api/photos/dates/${b.dataset.ignoreDate}/ignore`, { method: 'POST' });
@@ -924,7 +929,8 @@ async function viewFolder(id) {
       ${c.supplier_thumb ? `<img class="thumb" src="${esc(c.supplier_thumb)}" alt="" loading="lazy">` : '<div class="thumb">写真なし</div>'}
       <div class="body">
         <div class="mgmt">${esc(c.mgmt_no)}</div>
-        <div class="brand">${esc(c.brand)} ${c.ai_pick ? '<span class="chip ai">AIのおすすめ</span>' : ''}</div>
+        <div class="brand">${esc(c.brand)} ${c.ai_pick ? '<span class="chip ai">AIのおすすめ</span>' : ''}
+          ${c.status === 'listed' ? `<span class="chip ok">出品中${c.channel ? '・' + esc(c.channel) : ''}</span>` : c.status === 'sold' ? '<span class="chip skipped">売れた</span>' : '<span class="chip duplicate">未出品</span>'}</div>
         <div class="nm">${esc(itemLabel(c))}</div>
       </div>
       <div class="when">仕入れ<br>${esc(c.purchase_date.slice(5).replace('-', '/'))}</div>

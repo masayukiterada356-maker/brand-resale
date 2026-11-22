@@ -91,9 +91,10 @@ async function suggest(folderId, env) {
   if (!folder) return fail('見つかりません', 404);
   const { results: candidates } = await env.DB.prepare(`SELECT i.id, i.mgmt_no, i.brand, i.category, i.name, i.model, i.notes, i.accessories
       FROM items i
-      WHERE i.status = 'in_stock' AND i.purchase_date <= ?
+      WHERE (i.status IN ('in_stock', 'listed') OR (i.status = 'sold' AND i.sold_date >= ?))
+        AND i.purchase_date <= ?
         AND NOT EXISTS (SELECT 1 FROM photo_folders f WHERE f.item_id = i.id)
-      ORDER BY i.purchase_date DESC LIMIT 60`).bind(folder.shoot_date).all();
+      ORDER BY CASE i.status WHEN 'in_stock' THEN 0 ELSE 1 END, i.purchase_date DESC LIMIT 80`).bind(folder.shoot_date, folder.shoot_date).all();
   if (!candidates.length) return fail('写真のない在庫がありません');
 
   const { results: photos } = await env.DB

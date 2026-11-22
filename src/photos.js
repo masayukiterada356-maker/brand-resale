@@ -14,30 +14,34 @@ const byNumber = (a, b) => (Number(a.name) - Number(b.name)) || a.name.localeCom
  * ドライブを確認して、新しい番号フォルダ・写真をデータベースに入れる。
  * すでにあるフォルダの割り当ては変えない。写真が後から増えた時は足す。
  */
-export async function syncDrive(env) {
+export async function syncDrive(env, { budget = 40 } = {}) {
+  // budget：1回の確認でGoogleドライブに問い合わせる回数の目安（Cloudflare無料版は1回50回まで）
   const drive = driveFor(env);
   const root = driveRoot(env);
   if (!root) throw new Error('外注さんのフォルダ（DRIVE_ROOT_FOLDER_ID）が設定されていません');
   const since = env.PHOTO_SYNC_FROM || '2000-01-01';
 
-  const dateFolders = (await drive.listChildren([root], { folders: true }))
+  const dateFolders = (await drive.listFolder(root, { folders: true }))
     .filter((d) => jstDate(d.createdTime) >= since);
-  if (!dateFolders.length) return { folders: 0, new_folders: 0, new_photos: 0 };
+  if (!dateFolders.length) return { folders: 0, new_folders: 0, new_photos: 0, remaining: 0 };
   const dateById = new Map(dateFolders.map((d) => [d.id, d]));
 
-  const itemFolders = await drive.listChildren(dateFolders.map((d) => d.id), { folders: true });
-  const files = itemFolders.length
-    ? await drive.listChildren(itemFolders.map((f) => f.id), { folders: false })
-    : [];
+  // 日付フォルダの中の番号フォルダ（日付フォルダごとに1回ずつ）
+  const itemFolders = [];
+  for (const d of dateFolders) itemFolders.push(...(await drive.listFolder(d.id, { folders: true })));
 
-  const filesByFolder = new Map();
-  for (const f of files) {
-    if (!filesByFolder.has(f.parent)) filesByFolder.set(f.parent, []);
-    filesByFolder.get(f.parent).push(f);
-  }
-
-  const { results: known } = await env.DB.prepare('SELECT drive_id, item_id FROM photo_folders').all();
+  const { results: known } = await env.DB.prepare('SELECT drive_id, item_id, synced_at FROM photo_folders').all();
   const knownFolders = new Map(known.map((r) => [r.drive_id, r]));
+
+  // 読む順番：まだ一度も読んでいないフォルダ → 前に読んだのが古いフォルダ
+  const order = [...itemFolders].sort((a, b) => {
+    const sa = knownFolders.get(a.id)?.synced_at || '';
+    const sb = knownFolders.get(b.id)?.synced_at || '';
+    return sa.localeCompare(sb) || byNumber(a, b);
+  });
+  const left = Math.max(budget - (drive.calls || 0), 5);
+  const targets = order.slice(0, left);
+
   const { results: knownP } = await env.DB.prepare('SELECT drive_id FROM photos').all();
   const knownPhotos = new Set(knownP.map((r) => r.drive_id));
 
@@ -45,20 +49,21 @@ export async function syncDrive(env) {
   let newFolders = 0;
   let newPhotos = 0;
 
-  for (const f of itemFolders.sort(byNumber)) {
+  for (const f of targets) {
     const date = dateById.get(f.parent);
-    const photos = (filesByFolder.get(f.id) || [])
+    const photos = (await drive.listFolder(f.id, { folders: false }))
       .sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
     const prev = knownFolders.get(f.id);
 
     if (!prev) {
       newFolders++;
       stmts.push(env.DB.prepare(`INSERT INTO photo_folders
-          (drive_id, date_folder_id, date_label, number, shoot_date, photo_count, first_photo_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          (drive_id, date_folder_id, date_label, number, shoot_date, photo_count, first_photo_id, synced_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
         .bind(f.id, date.id, date.name, f.name, jstDate(date.createdTime), photos.length, photos[0]?.id || null));
     } else {
-      stmts.push(env.DB.prepare('UPDATE photo_folders SET photo_count = ?, first_photo_id = ?, number = ?, date_label = ? WHERE drive_id = ?')
+      stmts.push(env.DB.prepare(`UPDATE photo_folders SET photo_count = ?, first_photo_id = ?, number = ?, date_label = ?,
+          synced_at = datetime('now') WHERE drive_id = ?`)
         .bind(photos.length, photos[0]?.id || null, f.name, date.name, f.id));
     }
 
@@ -76,7 +81,8 @@ export async function syncDrive(env) {
   stmts.push(env.DB.prepare("INSERT INTO settings (key, value) VALUES ('photo_synced_at', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value"));
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
 
-  return { folders: itemFolders.length, new_folders: newFolders, new_photos: newPhotos };
+  const unread = itemFolders.filter((f) => !knownFolders.get(f.id) && !targets.includes(f)).length;
+  return { folders: itemFolders.length, scanned: targets.length, new_folders: newFolders, new_photos: newPhotos, remaining: unread };
 }
 
 /* ---------- API ---------- */
@@ -105,15 +111,18 @@ async function getFolder(id, env) {
   const { results: photos } = await env.DB
     .prepare('SELECT drive_id, name, position FROM photos WHERE folder_id = ? ORDER BY position').bind(id).all();
 
-  // 候補：まだ写真が割り当てられていない在庫。撮影日より前に仕入れたものを先に
+  // 候補：写真がまだない商品（未出品・出品中、それと撮影日より後に売れた商品）
+  //   AIのおすすめ → 撮影日より前に仕入れた → 未出品 → 出品中 → 売れた の順
   const { results: candidates } = await env.DB.prepare(`SELECT i.id, i.mgmt_no, i.brand, i.category, i.name, i.model,
-        i.purchase_date, i.supplier_images_json,
+        i.purchase_date, i.supplier_images_json, i.status, i.channel,
         (i.purchase_date <= ?) AS before_shoot, (i.id = ?) AS ai_pick
       FROM items i
-      WHERE i.status = 'in_stock'
+      WHERE (i.status IN ('in_stock', 'listed') OR (i.status = 'sold' AND i.sold_date >= ?))
         AND NOT EXISTS (SELECT 1 FROM photo_folders f WHERE f.item_id = i.id)
-      ORDER BY ai_pick DESC, before_shoot DESC, i.purchase_date DESC, i.id DESC
-      LIMIT 300`).bind(folder.shoot_date, folder.ai_item_id ?? -1).all();
+      ORDER BY ai_pick DESC, before_shoot DESC,
+        CASE i.status WHEN 'in_stock' THEN 0 WHEN 'listed' THEN 1 ELSE 2 END,
+        i.purchase_date DESC, i.id DESC
+      LIMIT 400`).bind(folder.shoot_date, folder.ai_item_id ?? -1, folder.shoot_date).all();
 
   return json({
     folder,
@@ -203,6 +212,12 @@ export async function handlePhotos(req, env, url, ctx) {
     const res = await env.DB.prepare("UPDATE photo_folders SET status = 'ignored', ai_item_id = NULL WHERE date_folder_id = ? AND status = 'unassigned'")
       .bind(r[1]).run();
     return json({ ok: true, ignored: res.meta?.changes ?? 0 });
+  }
+  r = /^\/api\/photos\/dates\/([\w-]+)\/restore$/.exec(pathname);
+  if (m === 'POST' && r) {
+    const res = await env.DB.prepare("UPDATE photo_folders SET status = 'unassigned' WHERE date_folder_id = ? AND status = 'ignored'")
+      .bind(r[1]).run();
+    return json({ ok: true, restored: res.meta?.changes ?? 0 });
   }
   r = /^\/api\/photos\/img\/([\w-]+)$/.exec(pathname);
   if (m === 'GET' && r) {

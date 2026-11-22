@@ -251,7 +251,8 @@ export default {
   // 1時間ごとにドライブを確認して、新しい写真フォルダを取り込む
   async scheduled(event, env, ctx) {
     env = await withConfig(env);
-    ctx.waitUntil(syncDrive(env).catch((e) => console.error('写真の取り込みに失敗', e.message)));
-    ctx.waitUntil(checkGmail(env).catch((e) => console.error('Gmailの確認に失敗', e.message)));
+    // 1回の実行で外へ問い合わせられる数に上限（50回）があるので、ドライブとGmailで分け合う
+    ctx.waitUntil(syncDrive(env, { budget: 28 }).catch((e) => console.error('写真の取り込みに失敗', e.message)));
+    ctx.waitUntil(checkGmail(env, { max: 10 }).catch((e) => console.error('Gmailの確認に失敗', e.message)));
   },
 };

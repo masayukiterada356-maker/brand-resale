@@ -30,29 +30,36 @@ export async function accessToken(env) {
 class GoogleDrive {
   constructor(env) { this.env = env; }
 
-  // 複数の親フォルダの中身をまとめて取る（呼び出し回数を減らすため OR でつなぐ）
-  async listChildren(parentIds, { folders }) {
+  // 1つのフォルダの中身を取る（全ページ）
+  // ※ 複数のフォルダを OR でまとめて聞くと、Googleドライブは結果を途中までしか返さないことがあるので、必ず1つずつ聞く
+  async listFolder(parentId, { folders }) {
     const out = [];
-    for (let i = 0; i < parentIds.length; i += 30) {
-      const parents = parentIds.slice(i, i + 30).map((id) => `'${id}' in parents`).join(' or ');
-      const type = folders ? `mimeType = '${FOLDER}'` : "mimeType contains 'image/'";
-      const q = `(${parents}) and ${type} and trashed = false`;
-      let pageToken = '';
-      do {
-        const params = new URLSearchParams({
-          q, pageSize: '1000', fields: 'nextPageToken, files(id, name, parents, createdTime)',
-          supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',
-        });
-        if (pageToken) params.set('pageToken', pageToken);
-        const res = await fetch(`${API}/files?${params}`, {
-          headers: { authorization: `Bearer ${await accessToken(this.env)}` },
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(`ドライブを読めません：${data.error?.message || res.status}`);
-        out.push(...data.files.map((f) => ({ ...f, parent: f.parents?.[0] })));
-        pageToken = data.nextPageToken || '';
-      } while (pageToken);
-    }
+    const type = folders ? `mimeType = '${FOLDER}'` : "mimeType contains 'image/'";
+    const q = `'${parentId}' in parents and ${type} and trashed = false`;
+    let pageToken = '';
+    let calls = 0;
+    do {
+      const params = new URLSearchParams({
+        q, pageSize: '1000', fields: 'nextPageToken, incompleteSearch, files(id, name, parents, createdTime)',
+        supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',
+      });
+      if (pageToken) params.set('pageToken', pageToken);
+      const res = await fetch(`${API}/files?${params}`, {
+        headers: { authorization: `Bearer ${await accessToken(this.env)}` },
+      });
+      calls++;
+      const data = await res.json();
+      if (!res.ok) throw new Error(`ドライブを読めません：${data.error?.message || res.status}`);
+      out.push(...data.files.map((f) => ({ ...f, parent: parentId })));
+      pageToken = data.nextPageToken || '';
+    } while (pageToken && calls < 10);
+    this.calls = (this.calls || 0) + calls;
+    return out;
+  }
+
+  async listChildren(parentIds, opts) {
+    const out = [];
+    for (const id of parentIds) out.push(...(await this.listFolder(id, opts)));
     return out;
   }
 
@@ -103,6 +110,7 @@ class MockDrive {
     const set = new Set(parentIds);
     return this.nodes.filter((n) => set.has(n.parent) && n.folder === !!folders);
   }
+  async listFolder(parentId, opts) { return this.listChildren([parentId], opts); }
   async image(fileId) {
     const m = /^mock-d(\d+)-f(\d+)-p(\d+)$/.exec(fileId) || [];
     const color = MOCK_COLORS[(Number(m[2]) || 0) % MOCK_COLORS.length];
