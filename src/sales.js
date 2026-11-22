@@ -93,6 +93,17 @@ export async function handleSoldNotice(env, parsed, { source, message_id = null,
     const dup = await env.DB.prepare('SELECT id FROM sale_events WHERE message_id = ?').bind(message_id).first();
     if (dup) return { duplicate: true };
   }
+  // すでに記録済みの売れた商品（同じ商品IDで売れた記録がある）なら、2重に記録しない
+  if (parsed.external_id) {
+    const done = await env.DB.prepare(`SELECT p.item_id FROM platform_items p JOIN items i ON i.id = p.item_id
+        WHERE p.platform = ? AND p.external_id = ? AND i.status = 'sold'`).bind(parsed.platform, parsed.external_id).first();
+    if (done) {
+      await env.DB.prepare(`INSERT OR IGNORE INTO sale_events (source, message_id, platform, external_id, title, price, sold_date, status, item_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'matched', ?)`)
+        .bind(source, message_id, parsed.platform, parsed.external_id, parsed.title, parsed.price, sold_date, done.item_id).run();
+      return { already: true, item_id: done.item_id };
+    }
+  }
   const found = await findItem(env, parsed);
   const ins = await env.DB.prepare(`INSERT INTO sale_events (source, message_id, platform, external_id, title, price, sold_date, status, item_id, candidates_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?) RETURNING id`)

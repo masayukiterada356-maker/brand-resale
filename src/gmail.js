@@ -55,7 +55,7 @@ export async function checkGmail(env, { max = 15 } = {}) {
       continue;
     }
     const r = await handleSoldNotice(env, parsed, { source: 'gmail', message_id: id, sold_date: day });
-    if (r.matched) out.matched++; else if (!r.duplicate) out.pending++;
+    if (r.matched) out.matched++; else if (!r.duplicate && !r.already) out.pending++;
   }
   return out;
 }
