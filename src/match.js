@@ -35,7 +35,9 @@ export function score(ev, item) {
     if (inEv && inIt) s += 3;
     else if (inEv !== inIt && (inEv || inIt) && item.brand) s -= 3;
   }
-  if (item.channel && norm(item.channel).includes(norm(ev.platform))) s += 2;
+  // 出品先が同じなら少し上げる（ヤフーフリマは前の管理表では「ペイペイフリマ」）
+  const alias = (p) => norm(p).replace('ペイペイフリマ', 'ヤフーフリマ').replace('paypayフリマ', 'ヤフーフリマ');
+  if (item.channel && alias(item.channel).includes(alias(ev.platform))) s += 2;
   if (ev.price && item.start_price) {
     const r = ev.price / item.start_price;
     if (r > 0.6 && r < 1.4) s += 1;
