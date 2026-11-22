@@ -7,6 +7,7 @@ import { handleLegacy } from './legacy-api.js';
 import { handleSales, breakEven } from './sales.js';
 import { checkGmail } from './gmail.js';
 import { withConfig, handleConfig } from './config.js';
+import { handlePrices } from './prices.js';
 import { handleAuth, isLoggedIn } from './auth.js';
 import STATIC from './static-files.js';
 import { handleAgent, agentAuthorized, resetDraft } from './agent.js';
@@ -214,6 +215,8 @@ export default {
         }
         const cf = await handleConfig(req, env, url);
         if (cf) return cf;
+        const pc = await handlePrices(req, env, url);
+        if (pc) return pc;
         const sr = await handleSales(req, env, url);
         if (sr) return sr;
         const lg = await handleLegacy(req, env, url);

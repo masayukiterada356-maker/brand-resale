@@ -2,6 +2,7 @@
 //   npm run login … 専用のChromeを開く。3つのフリマに1回だけログインしておく
 //   npm run check … アプリにつながるか、ログインできているかを確かめる
 //   npm run run   … 「出品文OK」の商品の下書きを作る（タスクスケジューラーから毎晩）
+//   npm run price … 毎晩の値下げ（21時〜22時。タスクスケジューラーから毎晩21時）
 //
 // 絶対にしないこと：「出品する」「公開」ボタンを押すこと。下書き保存だけ。
 
@@ -19,6 +20,7 @@ import * as yahoo from './sites/yahoo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SITES = { mercari, rakuma, yahoo };
+const BY_PLATFORM = { 'メルカリ': mercari, 'ラクマ': rakuma, 'ヤフーフリマ': yahoo };
 
 async function loadConfig() {
   const file = process.env.AGENT_CONFIG || join(HERE, 'config.json');
@@ -46,7 +48,9 @@ async function openBrowser(cfg) {
 async function useFakeSites(ctx) {
   const dir = process.env.AGENT_FAKE_SITES;
   if (!dir) return;
-  const map = { 'jp.mercari.com': 'mercari.html', 'fril.jp': 'rakuma.html', 'paypayfleamarket-sec.yahoo.co.jp': 'yahoo.html', 'paypayfleamarket.yahoo.co.jp': 'done.html' };
+  const map = { 'jp.mercari.com': 'mercari.html', 'fril.jp': 'rakuma.html', 'paypayfleamarket-sec.yahoo.co.jp': 'yahoo.html', 'paypayfleamarket.yahoo.co.jp': 'done.html', 'item.fril.jp': 'price.html' };
+  // 値下げの画面（一覧・商品ページ・編集）は price.html
+  const isPricePage = (u) => /\/mypage\/listings|fril\.jp\/sell$|\/my\/selling|\/sell\/edit\/|\/item\/[^/]+\/edit|\/item\/edit|yahoo\.co\.jp\/item\/z\d+/.test(u);
   for (const [host, file] of Object.entries(map)) {
     await ctx.route(`https://${host}/**`, async (route) => {
       if (route.request().method() === 'POST') {
@@ -57,7 +61,7 @@ async function useFakeSites(ctx) {
       if (path.endsWith('.js')) {
         return route.fulfill({ contentType: 'text/javascript', body: await readFile(join(dir, path.split('/').pop()), 'utf8') });
       }
-      const body = await readFile(join(dir, file), 'utf8');
+      const body = await readFile(join(dir, isPricePage(route.request().url()) ? 'price.html' : file), 'utf8');
       return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body });
     });
   }
@@ -146,11 +150,84 @@ async function cmdRun(cfg) {
   log('終わりました');
 }
 
+// 毎晩の値下げ：一覧を読む → 計画をもらう → 終わりの時刻まで間隔をあけて1件ずつ100円下げる
+async function cmdPrice(cfg) {
+  const app = new App(cfg);
+  const [eh, em] = String(cfg.priceEndTime || '22:00').split(':').map(Number);
+  const end = new Date(); end.setHours(eh, em || 0, 0, 0);
+  if (end <= new Date()) end.setDate(end.getDate() + (process.env.AGENT_PRICE_NOW ? 0 : 0));
+  const endMs = process.env.AGENT_PRICE_MINUTES ? Date.now() + Number(process.env.AGENT_PRICE_MINUTES) * 60000 : end.getTime();
+  if (endMs <= Date.now()) { log('値下げの時間帯（〜' + (cfg.priceEndTime || '22:00') + '）を過ぎているので、今夜はしません'); return; }
+
+  const ctx = await openBrowser(cfg);
+  const page = ctx.pages()[0] || await ctx.newPage();
+  try {
+    // 1. 出品中の一覧を読んで送る
+    for (const key of cfg.platforms) {
+      const site = SITES[key];
+      if (!site?.listListings) continue;
+      try {
+        const listings = await site.listListings(page);
+        await ensureLoggedIn(page, site);
+        const r = await app.sendListings(site.PLATFORM, listings, listings.length > 0);
+        log(`${site.name}：出品中 ${r.received}件（結び付き ${r.linked}・確認待ち ${r.unlinked}）`);
+      } catch (e) {
+        log(`${site.name}：一覧を読めませんでした ${e.message}`);
+        await screenshot(page, `list_${key}`);
+        if (e instanceof LoginError) throw e;
+      }
+      await sleep(3000 + Math.random() * 3000);
+    }
+
+    // 2. 今夜の計画（1件およそ45秒として、時間内にできる件数だけ）
+    const capacity = Math.max(1, Math.floor((endMs - Date.now()) / 45000));
+    const plan = await app.pricePlan(Math.min(capacity, cfg.maxPriceDrops || 120));
+    log(`値下げ：今夜 ${plan.items.length}件（候補 ${plan.total_candidates}件・下限に到達 ${plan.floor_hits}件）`);
+
+    // 3. 終わりの時刻まで、間隔をばらつかせながら1件ずつ
+    for (const [n, item] of plan.items.entries()) {
+      const left = endMs - Date.now();
+      if (left < 30000) { log('時間になったので、残りは明日にします'); break; }
+      const site = BY_PLATFORM[item.platform];
+      try {
+        const r = await site.dropPrice(page, item);
+        if (r.status === 'changed') {
+          log(`  ${item.mgmt_no} ${item.platform}：画面の価格（${r.seen_price}円）が記録と違うので、今夜は下げません`);
+          await app.priceResult({ platform: item.platform, external_id: item.external_id, status: 'changed', seen_price: r.seen_price, old_price: item.current_price, message: '画面の価格が記録と違う' });
+        } else {
+          log(`  ${item.mgmt_no} ${item.platform}：${item.current_price} → ${item.new_price}円`);
+          await app.priceResult({ platform: item.platform, external_id: item.external_id, status: 'done', old_price: item.current_price, new_price: item.new_price });
+        }
+      } catch (e) {
+        const shot = await screenshot(page, `price_${item.mgmt_no}_${item.platform}`);
+        log(`  ${item.mgmt_no} ${item.platform}：失敗 ${e.message}（${shot}）`);
+        await app.priceResult({ platform: item.platform, external_id: item.external_id, status: 'error', old_price: item.current_price, message: e.message }).catch(() => {});
+        if (e instanceof LoginError) throw e;
+      }
+      const remaining = plan.items.length - n - 1;
+      if (remaining > 0) {
+        const gap = Math.max(5000, (endMs - Date.now()) / (remaining + 1));
+        await sleep(Math.min(gap * (0.5 + Math.random()), Math.max(endMs - Date.now() - 20000, 0)));
+      }
+    }
+  } finally {
+    await ctx.close();
+  }
+  log('値下げが終わりました');
+}
+
+async function ensureLoggedIn(page, site) {
+  if (/login|signin|accounts\.rakuten|login\.yahoo/.test(page.url())) {
+    throw new LoginError(`${site.name}のログインが切れています。「npm run login」でログインし直してください`);
+  }
+}
+
 const cmd = process.argv[2] || 'run';
 const cfg = await loadConfig().catch((e) => { log(e.message); process.exit(1); });
 try {
   if (cmd === 'login') await cmdLogin(cfg);
   else if (cmd === 'check') await cmdCheck(cfg);
+  else if (cmd === 'price') await cmdPrice(cfg);
   else await cmdRun(cfg);
 } catch (e) {
   log('止まりました：', e.message);

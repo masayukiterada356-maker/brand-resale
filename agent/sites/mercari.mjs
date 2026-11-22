@@ -91,3 +91,24 @@ export async function createDraft(page, item, p, files, notes) {
     throw new StepError('下書き保存', '保存できたか確認できませんでした（画面が変わりません）');
   });
 }
+
+/* ---------- 値下げ ---------- */
+import { scrapeListings, changePrice } from './price-common.mjs';
+export const PLATFORM = 'メルカリ';
+// 要確認：出品中の一覧のURL
+export const LISTINGS_URL = 'https://jp.mercari.com/mypage/listings';
+export function listListings(page) {
+  return scrapeListings(page, {
+    url: LISTINGS_URL,
+    linkPattern: /jp\.mercari\.com\/(item|sell\/edit)\/m\d+/,
+    idFrom: (h) => (/(m\d{6,})/.exec(h) || [])[1],
+    toUrl: (id) => `https://jp.mercari.com/item/${id}`,
+  });
+}
+export function dropPrice(page, item) {
+  return changePrice(page, {
+    editUrl: `https://jp.mercari.com/sell/edit/${item.external_id}`,
+    priceSelectors: ['input[name="price"]', page.getByLabel('販売価格')],
+    saveTexts: ['変更する', '更新する'],
+  }, item);
+}

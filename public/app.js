@@ -54,6 +54,7 @@ async function viewItems() {
       <div class="stat"><div class="k">在庫の仕入れ値合計</div><div class="v" id="s-cost">…</div></div>
     </div>
     <div id="inbox-banner"></div>
+    <div id="price-banner"></div>
     <div class="seg" id="views">${Object.entries(VIEWS).map(([k, v]) => `<button data-v="${k}" class="${k === listView ? 'on' : ''}">${v}</button>`).join('')}</div>
     <input class="search" id="q" type="search" placeholder="管理番号・ブランド・商品名で探す" value="${esc(searchText)}">
     <div class="list" id="list"></div>
@@ -70,6 +71,13 @@ async function viewItems() {
     timer = setTimeout(() => { searchText = $q.value; loadList(); }, 250);
   });
   await loadList();
+  api('/api/prices').then((d) => {
+    const $b = document.getElementById('price-banner');
+    if (!$b || !(d.counts?.linked || d.counts?.unlinked)) return;
+    const ln = d.last_night || {};
+    $b.innerHTML = `<a class="card banner ${d.counts.unlinked || d.errors.length ? 'warn' : ''}" href="#/prices">値下げ：昨夜 ${ln.done || 0}件${ln.error ? `・失敗 ${ln.error}件` : ''}
+      ${d.counts.unlinked ? `／<b>結び付けの確認 ${d.counts.unlinked}件</b>` : ''}${d.counts.floor ? `／下限に到達 ${d.counts.floor}件` : ''}</a>`;
+  }).catch(() => {});
   api('/api/sales/inbox').then((d) => {
     const n = d.events.length;
     const $b = document.getElementById('inbox-banner');
@@ -214,6 +222,11 @@ async function viewItem(id) {
     }));
     renderInvoice(it);
     renderBreakEven(it, it.break_even);
+    if (it.status !== 'sold') api(`/api/items/${it.id}/listings`).then((d) => {
+      if (!d.listings.length) return;
+      const $c = document.getElementById('be-card');
+      if ($c) $c.insertAdjacentHTML('beforeend', `<div class="note" style="margin-top:8px">今の出品：${d.listings.map((l) => `${esc(l.platform)} ${yen(l.price)}${l.floor_hit_at ? '（下限）' : ''}${l.last_drop_at ? `・${esc(l.last_drop_at.slice(5))}に値下げ` : ''}`).join('　')}</div>`);
+    }).catch(() => {});
     document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
     if (document.getElementById('ship-types')) {
       api('/api/sales/config').then((cfg) => {
@@ -541,6 +554,48 @@ async function loadInbox() {
   $l.querySelectorAll('[data-ignore]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/sales/inbox/${b.dataset.ignore}`, { method: 'POST', body: JSON.stringify({ ignore: true }) });
     loadInbox();
+  }));
+}
+
+/* ---------- 毎晩の値下げ ---------- */
+async function viewPrices() {
+  setHeader('値下げ', 'items', true);
+  $view.innerHTML = '<div class="empty">読み込み中…</div>';
+  const d = await api('/api/prices');
+  const ln = d.last_night || {};
+  $view.innerHTML = `
+    <div class="card">
+      <h2>毎晩の値下げ（21時〜22時・100円ずつ）</h2>
+      <div class="sum"><span class="chip ok">昨夜 ${ln.done || 0}件</span>${ln.changed ? `<span class="chip duplicate">手で変えた価格に合わせた ${ln.changed}件</span>` : ''}${ln.error ? `<span class="chip conflict">失敗 ${ln.error}件</span>` : ''}</div>
+      <p class="note" style="margin:0">出品中の結び付き ${d.counts.linked || 0}件。損益分岐点より下には下げません。1晩で回りきれない分は、次の晩に回します。</p>
+    </div>
+    ${d.unlinked.length ? `<h2 class="date-h">どの商品の出品ですか？（${d.unlinked.length}件）</h2>
+      ${d.unlinked.map((u) => `
+      <div class="card ai-card">
+        <div class="ai-head"><span class="chip ai">${esc(u.platform)}で出品中</span><span class="yen">${yen(u.price)}</span></div>
+        <div style="font-weight:600">${esc(u.title)}</div>
+        <div class="cands" style="margin-top:8px">${u.candidates.map((c) => `
+          <button class="cand" data-p="${esc(u.platform)}" data-x="${esc(u.external_id)}" data-item="${c.id}">
+            <div class="body"><div class="mgmt">${esc(c.mgmt_no)}</div><div class="brand">${esc(c.brand || '')}</div><div class="nm">${esc(c.name || '')}</div></div>
+            <div class="when">仕入 ${yen(c.cost)}</div>
+          </button>`).join('') || '<p class="note">近い商品が見つかりません</p>'}</div>
+        <button class="linkbtn" data-ignore-p="${esc(u.platform)}" data-x="${esc(u.external_id)}">在庫の商品ではない（値下げしない）</button>
+      </div>`).join('')}` : ''}
+    ${d.floor.length ? `<h2 class="date-h">損益分岐点に届いた商品（これ以上は下げません）</h2>
+      <div class="list">${d.floor.map((f) => `
+        <a class="item" href="#/item/${f.id}"><div class="body"><div class="mgmt">${esc(f.mgmt_no)}</div><div class="brand">${esc(f.brand || '')}</div><div class="nm">${esc(f.name || '')}</div></div>
+          <div class="right"><div class="yen">${yen(f.price)}</div><div class="days">${esc(f.platform)}・${f.days}日目</div></div></a>`).join('')}</div>
+      <p class="note">再出品やインスタ投稿を考える目安です。</p>` : ''}
+    ${d.errors.length ? `<h2 class="date-h">失敗（直近3日）</h2><div class="card">${d.errors.map((e) => `<div class="note">${esc(e.created_at.slice(5, 16))} ${esc(e.mgmt_no || '')} ${esc(e.platform)}：${esc(e.message || '')}</div>`).join('')}</div>` : ''}`;
+  $view.querySelectorAll('[data-item]').forEach((b) => b.addEventListener('click', async () => {
+    const mg = b.querySelector('.mgmt').textContent;
+    if (!confirm(`この出品を ${mg} に結び付けます。よろしいですか？`)) return;
+    await api('/api/prices/link', { method: 'POST', body: JSON.stringify({ platform: b.dataset.p, external_id: b.dataset.x, item_id: Number(b.dataset.item) }) });
+    toast(`${mg} に結び付けました`); viewPrices();
+  }));
+  $view.querySelectorAll('[data-ignore-p]').forEach((b) => b.addEventListener('click', async () => {
+    await api('/api/prices/link', { method: 'POST', body: JSON.stringify({ platform: b.dataset.ignoreP, external_id: b.dataset.x, ignore: true }) });
+    viewPrices();
   }));
 }
 
@@ -1176,6 +1231,7 @@ function route() {
   if (h === '#/import') return viewImport();
   if (h.startsWith('#/settings')) return viewSettings();
   if (h === '#/sold-inbox') return viewSoldInbox();
+  if (h === '#/prices') return viewPrices();
   const pm = /^#\/photos\/([\w-]+)$/.exec(h);
   if (pm) return viewFolder(pm[1]);
   if (h === '#/photos') return viewPhotos();

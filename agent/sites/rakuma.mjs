@@ -96,3 +96,24 @@ export async function createDraft(page, item, p, files, notes) {
     throw new StepError('下書き保存', '保存できたか確認できませんでした（画面が変わりません）');
   });
 }
+
+/* ---------- 値下げ ---------- */
+import { scrapeListings, changePrice } from './price-common.mjs';
+export const PLATFORM = 'ラクマ';
+// 要確認：出品中の一覧のURL
+export const LISTINGS_URL = 'https://fril.jp/sell';
+export function listListings(page) {
+  return scrapeListings(page, {
+    url: LISTINGS_URL,
+    linkPattern: /(item\.fril\.jp\/[0-9a-f]{16,}|fril\.jp\/item\/[0-9a-z]{8,}\/edit)/,
+    idFrom: (h) => (/item\.fril\.jp\/([0-9a-f]{16,})/.exec(h) || /fril\.jp\/item\/([0-9a-z]{8,})\/edit/.exec(h) || [])[1],
+    toUrl: (id) => `https://item.fril.jp/${id}`,
+  });
+}
+export function dropPrice(page, item) {
+  return changePrice(page, {
+    editUrl: `https://fril.jp/item/${item.external_id}/edit`,
+    priceSelectors: ['input[name="sellPrice"]'],
+    saveTexts: ['変更する', '更新する', '保存する'],
+  }, item);
+}

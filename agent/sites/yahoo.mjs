@@ -85,3 +85,31 @@ export async function createDraft(page, item, p, files, notes) {
     throw new StepError('下書き保存', '保存できたか確認できませんでした（画面が変わりません）');
   });
 }
+
+/* ---------- 値下げ ---------- */
+import { scrapeListings, changePrice } from './price-common.mjs';
+export const PLATFORM = 'ヤフーフリマ';
+// 要確認：出品中の一覧のURL
+export const LISTINGS_URL = 'https://paypayfleamarket.yahoo.co.jp/my/selling';
+export function listListings(page) {
+  return scrapeListings(page, {
+    url: LISTINGS_URL,
+    linkPattern: /paypayfleamarket(-sec)?\.yahoo\.co\.jp\/.*(item\/|itemId=)z\d+/,
+    idFrom: (h) => (/(z\d{6,})/.exec(h) || [])[1],
+    toUrl: (id) => `https://paypayfleamarket.yahoo.co.jp/item/${id}`,
+  });
+}
+export function dropPrice(page, item) {
+  // 商品ページの「編集」から編集画面を開く
+  return changePrice(page, {
+    openEdit: async (p, it) => {
+      await p.goto(`https://paypayfleamarket.yahoo.co.jp/item/${it.external_id}`, { waitUntil: 'domcontentloaded' });
+      await pause(2000, 3000);
+      const edit = await byText(p, 'a, button', '編集する', { exact: false }) || await byText(p, 'a, button', '商品の編集', { exact: false });
+      if (!edit) throw new StepError('編集', '商品ページに「編集」が見つかりません');
+      await edit.click();
+    },
+    priceSelectors: ['input[type="tel"]', 'input[name="price"]'],
+    saveTexts: ['変更する', '更新する', '保存する'],
+  }, item);
+}

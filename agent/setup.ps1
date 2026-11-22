@@ -22,4 +22,9 @@ if (-not (Test-Path "config.json")) {
 $bat = Join-Path $PSScriptRoot "run.bat"
 schtasks /Create /F /TN "フリマ下書き作成" /SC DAILY /ST 01:13 /TR "`"$bat`"" | Out-Null
 Write-Host "タスクスケジューラーに「フリマ下書き作成」（毎晩1:13）を登録しました。"
+
+# 毎晩 21:00 に値下げ（22:00までに終わる）
+$bat2 = Join-Path $PSScriptRoot "run-price.bat"
+schtasks /Create /F /TN "フリマ値下げ" /SC DAILY /ST 21:00 /TR "`"$bat2`"" | Out-Null
+Write-Host "タスクスケジューラーに「フリマ値下げ」（毎晩21:00〜22:00）を登録しました。"
 Write-Host "次に「npm run login」で3つのフリマにログインしてください。"

@@ -7,6 +7,7 @@
   "scripts": {
     "login": "node agent.mjs login",
     "run": "node agent.mjs run",
+    "price": "node agent.mjs price",
     "check": "node agent.mjs check",
     "test": "node --test test/*.test.mjs"
   },

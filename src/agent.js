@@ -2,6 +2,7 @@
 // 合言葉：ヘッダー x-agent-token ＝ Workerのシークレット AGENT_TOKEN
 
 import { PRICE_OFFSET, SHIPPING } from './listing-config.js';
+import { handlePriceAgent } from './prices.js';
 
 const PLATFORMS = ['mercari', 'rakuma', 'yahoo'];
 const MAX_PHOTOS = { mercari: 20, rakuma: 20, yahoo: 10 };
@@ -94,5 +95,7 @@ export async function handleAgent(req, env, url) {
   if (req.method === 'GET' && url.pathname === '/api/agent/queue') return queue(url, env);
   if (req.method === 'POST' && url.pathname === '/api/agent/result') return result(req, env);
   if (req.method === 'GET' && url.pathname === '/api/agent/ping') return json({ ok: true });
+  const pr = await handlePriceAgent(req, env, url);
+  if (pr) return pr;
   return fail('見つかりません', 404);
 }

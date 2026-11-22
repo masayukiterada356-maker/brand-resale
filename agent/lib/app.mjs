@@ -34,6 +34,22 @@ export class App {
     });
   }
 
+  /* ---------- 値下げ ---------- */
+  async sendListings(platform, listings, complete) {
+    return (await this.req('/api/agent/listings', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ platform, listings, complete }),
+    })).json();
+  }
+
+  async pricePlan(limit) { return (await this.req(`/api/agent/price-plan?limit=${limit}`)).json(); }
+
+  async priceResult(body) {
+    await this.req('/api/agent/price-result', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+  }
+
   // 写真をPCの作業フォルダに保存して、ファイルの場所の一覧を返す
   async downloadImages(item, dir) {
     await mkdir(dir, { recursive: true });
