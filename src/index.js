@@ -186,7 +186,8 @@ function serveStatic(pathname) {
   if (!f) return new Response('見つかりません', { status: 404 });
   if (!decoded.has(path)) decoded.set(path, Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0)));
   return new Response(decoded.get(path), {
-    headers: { 'content-type': f.type, 'cache-control': path.endsWith('.html') ? 'no-cache' : 'public, max-age=300' },
+    // 画面のプログラム（html・js・css）は毎回新しいものを確かめる（ホーム画面のアプリに古い画面が残らないように）
+    headers: { 'content-type': f.type, 'cache-control': /\.(html|js|css|webmanifest)$/.test(path) ? 'no-cache' : 'public, max-age=86400' },
   });
 }
 

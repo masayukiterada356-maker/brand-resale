@@ -165,10 +165,11 @@ async function viewItem(id) {
         </dl>
         ${it.sale.fee != null && !/発送：/.test(it.sale.memo || '') ? `
         <div class="ship-box">
-          <h2 style="margin-top:12px">発送の種類を選ぶ</h2>
+          <h2 style="margin-top:12px">発送する時</h2>
+          <label class="field"><span>① 梱包材（円）</span><input type="number" inputmode="numeric" id="ship-pack" class="num" value="${it.sale.packing || 0}"></label>
+          <div class="note" style="margin-bottom:6px">② 発送の種類をタップ</div>
           <div class="chips" id="ship-types"></div>
-          <label class="field" style="margin-top:8px"><span>梱包材（円）</span><input type="number" inputmode="numeric" id="ship-pack" class="num" value="${it.sale.packing || 0}"></label>
-          <p class="note">選ぶと送料が入り、入金額と利益を計算し直します。</p>
+          <p class="note">タップすると送料と梱包材が入り、入金額と利益を計算し直します。</p>
         </div>` : ''}
         <dl class="kv" hidden>
           ${it.sale.likes != null ? `<dt>いいね・閲覧</dt><dd>${it.sale.likes ?? '—'}・${it.sale.views ?? '—'}</dd>` : ''}
