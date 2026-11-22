@@ -19,6 +19,9 @@ export const SHIPPING = {
   '100サイズ':        { 'メルカリ': 1050, 'ラクマ': 1050, 'ヤフーフリマ': 1050 },
 };
 
+// 発送の種類ごとの梱包材（フリマ共通）
+export const PACKING = { 'ネコポス': 80, '宅急便コンパクト': 80, '60サイズ': 100, '80サイズ': 100, '100サイズ': 100 };
+
 const int = (v) => (v === '' || v === null || v === undefined ? null : Math.round(Number(v)));
 
 export function calcSale(b, cost) {
@@ -70,8 +73,11 @@ async function updateShipping(itemId, req, env) {
   if (!sale) return fail('売れた記録がありません', 404);
   const shipping = b.shipping !== undefined && b.shipping !== ''
     ? Number(b.shipping) : (SHIPPING[b.ship_type]?.[sale.platform] ?? sale.shipping ?? 0);
+  // 梱包材：入れていなければ、発送の種類の決まった金額
+  const packing = b.packing !== undefined && b.packing !== '' && b.packing !== null
+    ? Number(b.packing) : (PACKING[b.ship_type] ?? sale.packing ?? 0);
   const c = calcSale({ platform: sale.platform, price: sale.price, fee: sale.fee, shipping,
-    packing: b.packing ?? sale.packing ?? 0, photo_fee: b.photo_fee ?? sale.photo_fee ?? 0 }, sale.cost);
+    packing, photo_fee: b.photo_fee ?? sale.photo_fee ?? 0 }, sale.cost);
   if (c.error) return fail(c.error);
   await env.DB.prepare(`UPDATE sales SET shipping = ?, packing = ?, photo_fee = ?, payout = ?, profit = ?,
       memo = TRIM(COALESCE(memo, '') || ?) WHERE item_id = ?`)
@@ -164,7 +170,7 @@ export async function handleSales(req, env, url) {
   if (r && req.method === 'DELETE') return undoSold(Number(r[1]), env);
   r = /^\/api\/items\/(\d+)\/shipping$/.exec(url.pathname);
   if (r && req.method === 'POST') return updateShipping(Number(r[1]), req, env);
-  if (url.pathname === '/api/sales/config' && req.method === 'GET') return json({ fee_rate: FEE_RATE, shipping: SHIPPING });
+  if (url.pathname === '/api/sales/config' && req.method === 'GET') return json({ fee_rate: FEE_RATE, shipping: SHIPPING, packing: PACKING });
   if (url.pathname === '/api/sales/inbox' && req.method === 'GET') return inbox(env);
   if (url.pathname === '/api/sales/inbox/paste' && req.method === 'POST') return pasteNotice(req, env);
   r = /^\/api\/sales\/inbox\/(\d+)$/.exec(url.pathname);

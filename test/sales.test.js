@@ -18,3 +18,8 @@ test('送料の表（MASAさんの決めた金額）', () => {
   assert.deepEqual(Object.values(SHIPPING).map((r) => r['ラクマ']), [200, 430, 650, 750, 1050]);
   assert.deepEqual(Object.values(SHIPPING).map((r) => r['ヤフーフリマ']), [210, 490, 750, 850, 1050]);
 });
+
+import { PACKING } from '../src/sales.js';
+test('梱包材：ネコポス・コンパクトは80円、段ボールは100円', () => {
+  assert.deepEqual(PACKING, { 'ネコポス': 80, '宅急便コンパクト': 80, '60サイズ': 100, '80サイズ': 100, '100サイズ': 100 });
+});

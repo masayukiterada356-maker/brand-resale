@@ -165,11 +165,12 @@ async function viewItem(id) {
         </dl>
         ${it.sale.fee != null && !/発送：/.test(it.sale.memo || '') ? `
         <div class="ship-box">
-          <h2 style="margin-top:12px">発送する時</h2>
-          <label class="field"><span>① 梱包材（円）</span><input type="number" inputmode="numeric" id="ship-pack" class="num" value="${it.sale.packing || 0}"></label>
-          <div class="note" style="margin-bottom:6px">② 発送の種類をタップ</div>
+          <h2 style="margin-top:12px">発送する時：発送の種類をタップ</h2>
           <div class="chips" id="ship-types"></div>
           <p class="note">タップすると送料と梱包材が入り、入金額と利益を計算し直します。</p>
+          <details><summary class="note">梱包材の金額を変える時</summary>
+            <label class="field" style="margin-top:6px"><span>梱包材（円）空欄なら決まった金額</span><input type="number" inputmode="numeric" id="ship-pack" class="num" placeholder="空欄＝決まった金額"></label>
+          </details>
         </div>` : ''}
         <dl class="kv" hidden>
           ${it.sale.likes != null ? `<dt>いいね・閲覧</dt><dd>${it.sale.likes ?? '—'}・${it.sale.views ?? '—'}</dd>` : ''}
@@ -213,7 +214,7 @@ async function viewItem(id) {
     if (document.getElementById('ship-types')) {
       api('/api/sales/config').then((cfg) => {
         const $t = document.getElementById('ship-types');
-        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}（${yen(cfg.shipping[t][it.sale.platform] ?? 0)}）</button>`).join('');
+        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}<br><small>送料${yen(cfg.shipping[t][it.sale.platform] ?? 0)}＋梱包${yen(cfg.packing[t] ?? 0)}</small></button>`).join('');
         $t.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
           try {
             const r = await api(`/api/items/${it.id}/shipping`, { method: 'POST', body: JSON.stringify({ ship_type: b.dataset.t, packing: document.getElementById('ship-pack').value }) });
@@ -569,12 +570,16 @@ async function openSold(it) {
   let place = places[0];
   let feeTouched = false;
   let shipType = null;
+  let packTouched = false;
+  let shipCleared = false;
   const $ = (id) => document.getElementById(id);
   const upd = () => {
     const price = Number($('s-price').value) || 0;
     const rate = saleConfig.fee_rate[place] ?? 0;
     if (!feeTouched) $('s-fee').value = price ? Math.floor(price * rate) : '';
     if (shipType) $('s-ship').value = saleConfig.shipping[shipType]?.[place] ?? $('s-ship').value;
+    if (shipType && !packTouched) $('s-pack').value = saleConfig.packing?.[shipType] ?? $('s-pack').value;
+    if (!shipType && shipCleared && !packTouched) $('s-pack').value = 0;
     const payout = price - (Number($('s-fee').value) || 0) - (Number($('s-ship').value) || 0);
     const profit = payout - it.cost - (Number($('s-pack').value) || 0) - (Number($('s-photo').value) || 0);
     $('s-payout').textContent = price ? yen(payout) : '—';
@@ -590,11 +595,12 @@ async function openSold(it) {
   $c.querySelectorAll('#s-type button').forEach((b) => b.addEventListener('click', () => {
     shipType = b.dataset.t || null;
     $c.querySelectorAll('#s-type button').forEach((x) => x.classList.toggle('on', x === b));
-    if (!shipType) $('s-ship').value = 0;
+    if (!shipType) { $('s-ship').value = 0; shipCleared = true; }
     upd();
   }));
   $('s-fee').addEventListener('input', () => { feeTouched = true; upd(); });
-  ['s-price', 's-ship', 's-pack', 's-photo'].forEach((id) => $(id).addEventListener('input', upd));
+  $('s-pack').addEventListener('input', () => { packTouched = true; upd(); });
+  ['s-price', 's-ship', 's-photo'].forEach((id) => $(id).addEventListener('input', upd));
   $('s-cancel').addEventListener('click', () => viewItem(it.id));
   $('s-save').addEventListener('click', async () => {
     const platform = place === 'その他' ? $('s-other').value.trim() : place;
@@ -647,7 +653,7 @@ function renderInvoice(it) {
     if (document.getElementById('ship-types')) {
       api('/api/sales/config').then((cfg) => {
         const $t = document.getElementById('ship-types');
-        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}（${yen(cfg.shipping[t][it.sale.platform] ?? 0)}）</button>`).join('');
+        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}<br><small>送料${yen(cfg.shipping[t][it.sale.platform] ?? 0)}＋梱包${yen(cfg.packing[t] ?? 0)}</small></button>`).join('');
         $t.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
           try {
             const r = await api(`/api/items/${it.id}/shipping`, { method: 'POST', body: JSON.stringify({ ship_type: b.dataset.t, packing: document.getElementById('ship-pack').value }) });
@@ -802,7 +808,7 @@ async function generateListing(it) {
     if (document.getElementById('ship-types')) {
       api('/api/sales/config').then((cfg) => {
         const $t = document.getElementById('ship-types');
-        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}（${yen(cfg.shipping[t][it.sale.platform] ?? 0)}）</button>`).join('');
+        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}<br><small>送料${yen(cfg.shipping[t][it.sale.platform] ?? 0)}＋梱包${yen(cfg.packing[t] ?? 0)}</small></button>`).join('');
         $t.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
           try {
             const r = await api(`/api/items/${it.id}/shipping`, { method: 'POST', body: JSON.stringify({ ship_type: b.dataset.t, packing: document.getElementById('ship-pack').value }) });
