@@ -9,7 +9,7 @@ const API = 'https://www.googleapis.com/drive/v3';
 
 let cachedToken = null; // { token, exp }
 
-async function accessToken(env) {
+export async function accessToken(env) {
   if (cachedToken && cachedToken.exp > Date.now() + 60_000) return cachedToken.token;
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',

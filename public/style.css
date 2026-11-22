@@ -251,3 +251,6 @@ b.over, .over { color: var(--bad) !important; }
 .chip-btn { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 12px; font-size: 13px; cursor: pointer; }
 .chip-btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
 #s-place { margin-bottom: 6px; }
+
+.banner { display: block; text-decoration: none; color: var(--text); font-size: 14px; padding: 12px 14px; margin-bottom: 10px; }
+.banner.warn { border: 1.5px solid var(--accent); background: var(--accent-soft); }

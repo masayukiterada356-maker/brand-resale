@@ -51,6 +51,7 @@ async function viewItems() {
       <div class="stat"><div class="k">在庫数</div><div class="v" id="s-count">…</div></div>
       <div class="stat"><div class="k">在庫の仕入れ値合計</div><div class="v" id="s-cost">…</div></div>
     </div>
+    <div id="inbox-banner"></div>
     <div class="seg" id="views">${Object.entries(VIEWS).map(([k, v]) => `<button data-v="${k}" class="${k === listView ? 'on' : ''}">${v}</button>`).join('')}</div>
     <input class="search" id="q" type="search" placeholder="管理番号・ブランド・商品名で探す" value="${esc(searchText)}">
     <div class="list" id="list"></div>
@@ -67,6 +68,11 @@ async function viewItems() {
     timer = setTimeout(() => { searchText = $q.value; loadList(); }, 250);
   });
   await loadList();
+  api('/api/sales/inbox').then((d) => {
+    const n = d.events.length;
+    const $b = document.getElementById('inbox-banner');
+    if ($b) $b.innerHTML = `<a class="card banner ${n ? 'warn' : ''}" href="#/sold-inbox">${n ? `<b>売れたかもしれない商品が ${n}件</b> あります。確認してください` : '売れた通知メールを貼り付ける'}</a>`;
+  }).catch(() => {});
 }
 
 async function loadList() {
@@ -156,6 +162,15 @@ async function viewItem(id) {
           ${it.sale.extra_shipping ? `<dt>送料（その他）</dt><dd>${yen(it.sale.extra_shipping)}</dd>` : ''}
           ${it.sale.repair ? `<dt>リペア</dt><dd>${yen(it.sale.repair)}</dd>` : ''}
           <dt>利益</dt><dd><b class="${it.sale.profit < 0 ? 'neg' : ''}">${yen(it.sale.profit)}</b></dd>
+        </dl>
+        ${it.sale.fee != null && !/発送：/.test(it.sale.memo || '') ? `
+        <div class="ship-box">
+          <h2 style="margin-top:12px">発送の種類を選ぶ</h2>
+          <div class="chips" id="ship-types"></div>
+          <label class="field" style="margin-top:8px"><span>梱包材（円）</span><input type="number" inputmode="numeric" id="ship-pack" class="num" value="${it.sale.packing || 0}"></label>
+          <p class="note">選ぶと送料が入り、入金額と利益を計算し直します。</p>
+        </div>` : ''}
+        <dl class="kv" hidden>
           ${it.sale.likes != null ? `<dt>いいね・閲覧</dt><dd>${it.sale.likes ?? '—'}・${it.sale.views ?? '—'}</dd>` : ''}
         </dl>
       </div>` : ''}
@@ -194,6 +209,19 @@ async function viewItem(id) {
     }));
     renderInvoice(it);
     document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
+    if (document.getElementById('ship-types')) {
+      api('/api/sales/config').then((cfg) => {
+        const $t = document.getElementById('ship-types');
+        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}（${yen(cfg.shipping[t][it.sale.platform] ?? 0)}）</button>`).join('');
+        $t.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
+          try {
+            const r = await api(`/api/items/${it.id}/shipping`, { method: 'POST', body: JSON.stringify({ ship_type: b.dataset.t, packing: document.getElementById('ship-pack').value }) });
+            toast(`発送：${b.dataset.t}　利益 ${yen(r.profit)}`);
+            viewItem(it.id);
+          } catch (e) { toast(e.message); }
+        }));
+      }).catch(() => {});
+    }
     document.getElementById('undo-sold')?.addEventListener('click', async () => {
       if (!confirm('「売れた」の記録を取り消して、在庫に戻します。よろしいですか？')) return;
       try { await api(`/api/items/${it.id}/sold`, { method: 'DELETE' }); toast('在庫に戻しました'); viewItem(it.id); } catch (e) { toast(e.message); }
@@ -449,6 +477,65 @@ async function runCommit() {
 }
 
 
+/* ---------- 売れたかも（売れた通知の確認） ---------- */
+async function viewSoldInbox() {
+  setHeader('売れた通知', 'items', true);
+  $view.innerHTML = `
+    <div class="card">
+      <h2>売れた通知メールを貼り付ける</h2>
+      <p class="note" style="margin-top:0">メルカリの「購入しました」メールの本文を貼り付けると、どの商品かを探して記録します。（Gmailとつないだ後は自動になります）</p>
+      <textarea id="ib-text" rows="6" placeholder="メールの本文"></textarea>
+      <label class="field" style="margin-top:8px"><span>売れた日</span><input type="date" id="ib-date" value="${todayJst()}"></label>
+      <button class="btn" id="ib-go">読み取る</button>
+    </div>
+    <div id="ib-list"></div>`;
+  document.getElementById('ib-go').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/sales/inbox/paste', { method: 'POST', body: JSON.stringify({ text: document.getElementById('ib-text').value, sold_date: document.getElementById('ib-date').value }) });
+      toast(r.matched ? '商品が特定できたので、売れたとして記録しました' : '候補から商品を選んでください');
+      document.getElementById('ib-text').value = '';
+      loadInbox();
+    } catch (e) { toast(e.message); }
+  });
+  loadInbox();
+}
+
+async function loadInbox() {
+  const $l = document.getElementById('ib-list');
+  const d = await api('/api/sales/inbox');
+  if (!d.events.length) { $l.innerHTML = '<div class="empty" style="padding:24px">確認を待っている通知はありません</div>'; return; }
+  $l.innerHTML = d.events.map((e) => `
+    <div class="card ai-card">
+      <div class="ai-head"><span class="chip ai">${esc(e.platform)}で売れました</span><span class="note">${esc(e.sold_date)}</span></div>
+      <div style="font-weight:600">${esc(e.title)}</div>
+      <div class="big-cost" style="font-size:20px">${yen(e.price)}</div>
+      <p class="note">どの商品ですか？（近い順）</p>
+      <div class="cands">${e.candidates.map((c, i) => `
+        <button class="cand" data-ev="${e.id}" data-item="${c.id}">
+          <div class="body">
+            <div class="mgmt">${esc(c.mgmt_no)} ${i === 0 ? '<span class="chip ai">一番近い</span>' : ''}</div>
+            <div class="brand">${esc(c.brand || '')}</div>
+            <div class="nm">${esc(c.name || '')}</div>
+          </div>
+          <div class="when">${esc(c.channel || '')}<br>仕入 ${yen(c.cost)}</div>
+        </button>`).join('') || '<div class="note">近い商品が見つかりませんでした。管理番号で探して「売れた」ボタンで記録してください。</div>'}</div>
+      <button class="linkbtn" data-ignore="${e.id}">この通知は対象外にする</button>
+    </div>`).join('');
+  $l.querySelectorAll('[data-item]').forEach((b) => b.addEventListener('click', async () => {
+    const mg = b.querySelector('.mgmt').textContent.trim().split(' ')[0];
+    if (!confirm(`${mg} が売れたとして記録します。よろしいですか？`)) return;
+    try {
+      await api(`/api/sales/inbox/${b.dataset.ev}`, { method: 'POST', body: JSON.stringify({ item_id: Number(b.dataset.item) }) });
+      toast(`${mg} を売れたとして記録しました。発送の時に、発送の種類を選んでください`);
+      loadInbox();
+    } catch (e) { toast(e.message); }
+  }));
+  $l.querySelectorAll('[data-ignore]').forEach((b) => b.addEventListener('click', async () => {
+    await api(`/api/sales/inbox/${b.dataset.ignore}`, { method: 'POST', body: JSON.stringify({ ignore: true }) });
+    loadInbox();
+  }));
+}
+
 /* ---------- 売れた ---------- */
 let saleConfig = null;
 async function openSold(it) {
@@ -554,6 +641,19 @@ function renderInvoice(it) {
       toast('インボイスの情報を保存しました');
       renderInvoice(it);
     document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
+    if (document.getElementById('ship-types')) {
+      api('/api/sales/config').then((cfg) => {
+        const $t = document.getElementById('ship-types');
+        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}（${yen(cfg.shipping[t][it.sale.platform] ?? 0)}）</button>`).join('');
+        $t.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
+          try {
+            const r = await api(`/api/items/${it.id}/shipping`, { method: 'POST', body: JSON.stringify({ ship_type: b.dataset.t, packing: document.getElementById('ship-pack').value }) });
+            toast(`発送：${b.dataset.t}　利益 ${yen(r.profit)}`);
+            viewItem(it.id);
+          } catch (e) { toast(e.message); }
+        }));
+      }).catch(() => {});
+    }
     document.getElementById('undo-sold')?.addEventListener('click', async () => {
       if (!confirm('「売れた」の記録を取り消して、在庫に戻します。よろしいですか？')) return;
       try { await api(`/api/items/${it.id}/sold`, { method: 'DELETE' }); toast('在庫に戻しました'); viewItem(it.id); } catch (e) { toast(e.message); }
@@ -696,6 +796,19 @@ async function generateListing(it) {
     toast(e.message);
     renderInvoice(it);
     document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
+    if (document.getElementById('ship-types')) {
+      api('/api/sales/config').then((cfg) => {
+        const $t = document.getElementById('ship-types');
+        $t.innerHTML = Object.keys(cfg.shipping).map((t) => `<button type="button" class="chip-btn" data-t="${t}">${t}（${yen(cfg.shipping[t][it.sale.platform] ?? 0)}）</button>`).join('');
+        $t.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
+          try {
+            const r = await api(`/api/items/${it.id}/shipping`, { method: 'POST', body: JSON.stringify({ ship_type: b.dataset.t, packing: document.getElementById('ship-pack').value }) });
+            toast(`発送：${b.dataset.t}　利益 ${yen(r.profit)}`);
+            viewItem(it.id);
+          } catch (e) { toast(e.message); }
+        }));
+      }).catch(() => {});
+    }
     document.getElementById('undo-sold')?.addEventListener('click', async () => {
       if (!confirm('「売れた」の記録を取り消して、在庫に戻します。よろしいですか？')) return;
       try { await api(`/api/items/${it.id}/sold`, { method: 'DELETE' }); toast('在庫に戻しました'); viewItem(it.id); } catch (e) { toast(e.message); }
@@ -954,6 +1067,7 @@ function route() {
   if (m) return viewItem(m[1]);
   if (h === '#/import') return viewImport();
   if (h === '#/settings') return viewSettings();
+  if (h === '#/sold-inbox') return viewSoldInbox();
   const pm = /^#\/photos\/([\w-]+)$/.exec(h);
   if (pm) return viewFolder(pm[1]);
   if (h === '#/photos') return viewPhotos();
