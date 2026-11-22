@@ -4,25 +4,22 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
   // 画面でも使うプログラム（CSVの読み取りなど）を public/shared/ に写してから動かす
   "build": { "command": "node scripts/copy-shared.mjs" },
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
-  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "brand-resale-db",
       // Cloudflareに載せる時に `npx wrangler d1 create brand-resale-db` で出てくるIDに差し替える
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "c66d9dd8-340d-4eda-93d1-53e9e67b3e03",
       "migrations_dir": "migrations"
     }
   ],
   // サムネイルの保存場所（Workers KV。無料・カード登録不要）
   "kv_namespaces": [
-    { "binding": "STORE", "id": "00000000000000000000000000000000" }
+    { "binding": "STORE", "id": "4290ac7471274d818185aff147133e93" }
   ],
   "vars": {
     // 外注さんの共有フォルダ「寺田 将之さん」

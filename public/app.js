@@ -16,6 +16,7 @@ async function api(path, opts = {}) {
     headers: { 'content-type': 'application/json', ...(opts.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !path.startsWith('/api/login')) { showLogin(); throw new Error('ログインしてください'); }
   if (!res.ok) throw new Error(data.error || `エラー（${res.status}）`);
   return data;
 }
@@ -52,7 +53,8 @@ async function viewItems() {
     </div>
     <div class="seg" id="views">${Object.entries(VIEWS).map(([k, v]) => `<button data-v="${k}" class="${k === listView ? 'on' : ''}">${v}</button>`).join('')}</div>
     <input class="search" id="q" type="search" placeholder="管理番号・ブランド・商品名で探す" value="${esc(searchText)}">
-    <div class="list" id="list"></div>`;
+    <div class="list" id="list"></div>
+    <p style="text-align:center;margin-top:20px"><a href="#/settings" class="note">設定（パスワード・ログアウト）</a></p>`;
   document.querySelectorAll('#views button').forEach((b) => b.addEventListener('click', () => {
     listView = b.dataset.v;
     document.querySelectorAll('#views button').forEach((x) => x.classList.toggle('on', x === b));
@@ -806,6 +808,57 @@ async function assign(folderId, itemId, f) {
   }
 }
 
+/* ---------- ログイン・設定 ---------- */
+let loginShown = false;
+function showLogin() {
+  if (loginShown) return;
+  loginShown = true;
+  setHeader('ログイン', '');
+  $view.innerHTML = `
+    <div class="card" style="margin-top:24px">
+      <h2>在庫管理にログイン</h2>
+      <form id="login-form">
+        <label class="field"><span>パスワード</span>
+          <input type="password" id="pw" autocomplete="current-password" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:16px"></label>
+        <button class="btn" type="submit">ログイン</button>
+      </form>
+      <p class="note">一度ログインすると、このiPhone（ブラウザ）では1年間そのまま使えます。</p>
+    </div>`;
+  document.getElementById('login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      await api('/api/login', { method: 'POST', body: JSON.stringify({ password: document.getElementById('pw').value }) });
+      loginShown = false;
+      route(); refreshBadge();
+    } catch (e) { toast(e.message); }
+  });
+}
+
+function viewSettings() {
+  setHeader('設定', '', true);
+  $view.innerHTML = `
+    <div class="card">
+      <h2>パスワードを変える</h2>
+      <label class="field"><span>今のパスワード</span><input type="password" id="pw-cur" autocomplete="current-password"></label>
+      <label class="field"><span>新しいパスワード（10文字以上）</span><input type="password" id="pw-new" autocomplete="new-password"></label>
+      <button class="btn" id="pw-save">変える</button>
+      <p class="note">変えると、ほかの端末ではログインし直しになります。</p>
+    </div>
+    <button class="btn ghost" id="logout">ログアウト</button>`;
+  document.querySelectorAll('#pw-cur, #pw-new').forEach((el) => Object.assign(el.style, { width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--line)', background: 'var(--bg)', fontSize: '16px' }));
+  document.getElementById('pw-save').addEventListener('click', async () => {
+    try {
+      await api('/api/password', { method: 'POST', body: JSON.stringify({ current: document.getElementById('pw-cur').value, next: document.getElementById('pw-new').value }) });
+      toast('パスワードを変えました');
+      location.hash = '#/';
+    } catch (e) { toast(e.message); }
+  });
+  document.getElementById('logout').addEventListener('click', async () => {
+    await api('/api/logout', { method: 'POST' }).catch(() => {});
+    showLogin();
+  });
+}
+
 /* ---------- 画面の切り替え ---------- */
 function route() {
   const h = location.hash || '#/';
@@ -813,6 +866,7 @@ function route() {
   window.scrollTo(0, 0);
   if (m) return viewItem(m[1]);
   if (h === '#/import') return viewImport();
+  if (h === '#/settings') return viewSettings();
   const pm = /^#\/photos\/([\w-]+)$/.exec(h);
   if (pm) return viewFolder(pm[1]);
   if (h === '#/photos') return viewPhotos();

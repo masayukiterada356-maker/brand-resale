@@ -4,6 +4,8 @@ import { buildPreview } from './import.js';
 import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
 import { handleListings } from './listings.js';
 import { handleLegacy } from './legacy-api.js';
+import { handleAuth, isLoggedIn } from './auth.js';
+import STATIC from './static-files.js';
 import { handleAgent, agentAuthorized, resetDraft } from './agent.js';
 
 const json = (data, status = 200) =>
@@ -133,9 +135,9 @@ async function listItems(url, env) {
     return { ...r, thumb };
   });
   const totals = await env.DB.prepare(`SELECT
-      SUM(status != 'sold') AS count, COALESCE(SUM(CASE WHEN status != 'sold' THEN cost END), 0) AS cost,
-      SUM(status = 'in_stock') AS unlisted, COALESCE(SUM(CASE WHEN status = 'in_stock' THEN cost END), 0) AS unlisted_cost,
-      SUM(status = 'listed') AS listed, SUM(status = 'sold') AS sold
+      COALESCE(SUM(status != 'sold'), 0) AS count, COALESCE(SUM(CASE WHEN status != 'sold' THEN cost END), 0) AS cost,
+      COALESCE(SUM(status = 'in_stock'), 0) AS unlisted, COALESCE(SUM(CASE WHEN status = 'in_stock' THEN cost END), 0) AS unlisted_cost,
+      COALESCE(SUM(status = 'listed'), 0) AS listed, COALESCE(SUM(status = 'sold'), 0) AS sold
     FROM items`).first();
   return json({ items, totals });
 }
@@ -173,6 +175,18 @@ async function getItem(id, env) {
   return json({ ...parseItem(r), photos, sale: sale || null });
 }
 
+// 画面のファイル（public/ の中身。Workerの中に入れてある）
+const decoded = new Map();
+function serveStatic(pathname) {
+  const path = pathname === '/' ? '/index.html' : pathname;
+  const f = STATIC[path] || (!/\.[a-z]+$/.test(path) ? STATIC['/index.html'] : null);
+  if (!f) return new Response('見つかりません', { status: 404 });
+  if (!decoded.has(path)) decoded.set(path, Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0)));
+  return new Response(decoded.get(path), {
+    headers: { 'content-type': f.type, 'cache-control': path.endsWith('.html') ? 'no-cache' : 'public, max-age=300' },
+  });
+}
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -181,6 +195,13 @@ export default {
 
     if (pathname.startsWith('/api/')) {
       try {
+        const au = await handleAuth(req, env, url);
+        if (au) return au;
+        // 自宅PCのプログラムは合言葉で入る（下書き用の画像の取得も含む）
+        const agentPaths = /^\/api\/(agent\/|items\/\d+\/thumb$|photos\/img\/)/.test(pathname);
+        if (!(agentPaths && agentAuthorized(req, env)) && !pathname.startsWith('/api/agent/') && !(await isLoggedIn(req, env))) {
+          return fail('ログインしてください', 401);
+        }
         const lg = await handleLegacy(req, env, url);
         if (lg) return lg;
         const ar = await handleAgent(req, env, url);
@@ -212,7 +233,7 @@ export default {
         return fail(`サーバーのエラー：${e.message}`, 500);
       }
     }
-    return env.ASSETS.fetch(req);
+    return serveStatic(pathname);
   },
 
   // 1時間ごとにドライブを確認して、新しい写真フォルダを取り込む
