@@ -8,7 +8,7 @@ const json = (data, status = 200) =>
 const fail = (message, status = 400) => json({ error: message }, status);
 
 // 手数料の率（ラクマは月ごとに変わることがあるので、後で設定画面から変えられるようにする）
-export const FEE_RATE = { 'メルカリ': 0.10, 'ラクマ': 0.10, 'ヤフーフリマ': 0.05 };
+export const FEE_RATE = { 'メルカリ': 0.10, 'ラクマ': 0.10, 'ヤフーフリマ': 0.05, 'ヤフオク': 0.10 };
 
 // 発送の種類ごとの送料（各フリマの配送サービス）。梱包代は商品ごとに入れる
 export const SHIPPING = {
@@ -123,7 +123,7 @@ async function confirmEvent(env, eventId, itemId) {
 async function pasteNotice(req, env) {
   const b = await req.json().catch(() => ({}));
   const parsed = parseSoldMail(b.text);
-  if (!parsed) return fail('売れた通知のメールとして読めませんでした（今はメルカリ・ラクマに対応）');
+  if (!parsed) return fail('売れた通知のメールとして読めませんでした（メルカリ・ラクマ・ヤフーフリマに対応）');
   if (!parsed.price) return fail('価格が読み取れませんでした');
   const day = /^\d{4}-\d{2}-\d{2}$/.test(b.sold_date || '') ? b.sold_date : new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
   return json({ parsed, ...(await handleSoldNotice(env, parsed, { source: 'paste', sold_date: day })) });

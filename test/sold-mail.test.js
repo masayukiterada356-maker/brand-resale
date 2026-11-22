@@ -59,3 +59,22 @@ test('ラクマの「代金のお支払いがありました」通知を読む',
   assert.equal(r.external_id, 'order:879843222');
   assert.match(r.title, /GGサイケデリック/);
 });
+
+test('ヤフーフリマ（Yahoo!かんたん決済）の通知を読む', () => {
+  const mail = `このメールはYahoo!オークション、またはYahoo!フリマを利用されたお客様に、Yahoo!かんたん決済より自動的にお送りしております。
+
+下記商品について、Yahoo!かんたん決済での支払いを受け付けました。
+
+----------
+  商品タイトル             ： 【美品】ロエベ クロスボディ カメラバッグ ミニ サテンカーフ ブラック 黒 LOEWE ショルダーバッグ アナグラム
+  商品ID                   ： z701597106
+  取引相手の支払金額       ： 155,000 円
+  決済ID                   ： 26110798468313
+----------`;
+  const r = parseSoldMail(mail);
+  assert.equal(r.platform, 'ヤフーフリマ');
+  assert.equal(r.external_id, 'z701597106');
+  assert.equal(r.price, 155000);
+  assert.match(r.title, /カメラバッグ/);
+  assert.equal(parseSoldMail(mail.replace('z701597106', 'w1247518192')).platform, 'ヤフオク');
+});

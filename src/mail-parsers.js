@@ -22,8 +22,22 @@ function rakuma(text) {
   return { platform: 'ラクマ', external_id: order ? `order:${order}` : null, title, price: yen(field(text, '商品価格')) };
 }
 
-// ヤフーフリマは、実物のメールを見てから足す
-export const MAIL_PARSERS = [mercari, rakuma];
+// ヤフーフリマ：Yahoo!かんたん決済の「支払いを受け付けました」メール
+// 同じメールがヤフオクで売れた時にも届くので、商品ID が z で始まればヤフーフリマ、それ以外はヤフオクとする
+function yahoo(text) {
+  if (!/Yahoo!かんたん決済/.test(text) || !/支払いを受け付けました/.test(text)) return null;
+  const title = field(text, '商品タイトル');
+  const id = field(text, '商品ID');
+  if (!title) return null;
+  return {
+    platform: /^z/i.test(id) ? 'ヤフーフリマ' : 'ヤフオク',
+    external_id: id || null,
+    title,
+    price: yen(field(text, '取引相手の支払金額')),
+  };
+}
+
+export const MAIL_PARSERS = [mercari, rakuma, yahoo];
 
 export function parseSoldMail(text) {
   const t = String(text || '').replace(/\r\n/g, '\n');
