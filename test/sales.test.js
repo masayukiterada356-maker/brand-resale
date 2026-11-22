@@ -11,3 +11,10 @@ test('売れた：入金額と利益（管理表の EFJ2260 と同じ計算）',
   assert.equal(calcSale({ platform: 'ヤフーフリマ', price: 10000 }, 5000).fee, 500);
   assert.ok(calcSale({ platform: 'メルカリ', price: '' }, 0).error);
 });
+
+import { SHIPPING } from '../src/sales.js';
+test('送料の表（MASAさんの決めた金額）', () => {
+  assert.deepEqual(Object.values(SHIPPING).map((r) => r['メルカリ']), [210, 450, 750, 850, 1050]);
+  assert.deepEqual(Object.values(SHIPPING).map((r) => r['ラクマ']), [200, 430, 650, 750, 1050]);
+  assert.deepEqual(Object.values(SHIPPING).map((r) => r['ヤフーフリマ']), [210, 490, 750, 850, 1050]);
+});
