@@ -165,23 +165,28 @@ async function assignFolder(id, req, env) {
   return json({ ok: true, mgmt_no: item.mgmt_no, item_id: itemId, first_photo_id: first?.drive_id || null });
 }
 
-// 写真を小さくして返す。一度読んだらR2に置いておき、次からはそこから返す
-async function photoImage(fileId, url, env) {
+// 写真を小さくして返す。一度読んだら Cloudflare のキャッシュに置き、次からはそこから返す
+// （無料の保存場所 KV は1日の書き込み回数に上限があるので、写真の控えはキャッシュにする）
+async function photoImage(fileId, url, env, ctx) {
   const size = Math.min(Math.max(Number(url.searchParams.get('s')) || 400, 100), 2000);
+  const cacheKey = new Request(`https://photo-cache.internal/${fileId}/${size}`);
+  const cache = typeof caches !== 'undefined' ? caches.default : null;
+  const hit = cache ? await cache.match(cacheKey) : null;
+  if (hit) return hit;
+
   const known = await env.DB.prepare('SELECT 1 FROM photos WHERE drive_id = ?').bind(fileId).first();
   if (!known) return fail('見つかりません', 404);
-
-  const key = `drive-cache/${fileId}_s${size}`;
-  const headers = { 'cache-control': 'private, max-age=604800' };
-  const hit = env.PHOTOS ? await env.PHOTOS.get(key) : null;
-  if (hit) return new Response(hit.body, { headers: { ...headers, 'content-type': hit.httpMetadata?.contentType || 'image/jpeg' } });
-
   const img = await driveFor(env).image(fileId, size);
-  if (env.PHOTOS) await env.PHOTOS.put(key, img.body, { httpMetadata: { contentType: img.type } });
-  return new Response(img.body, { headers: { ...headers, 'content-type': img.type } });
+  const res = new Response(img.body, { headers: { 'cache-control': 'private, max-age=604800', 'content-type': img.type } });
+  if (cache) {
+    const copy = new Response(img.body, { headers: { 'cache-control': 'public, max-age=2592000', 'content-type': img.type } });
+    const p = cache.put(cacheKey, copy);
+    if (ctx?.waitUntil) ctx.waitUntil(p); else await p;
+  }
+  return res;
 }
 
-export async function handlePhotos(req, env, url) {
+export async function handlePhotos(req, env, url, ctx) {
   const { pathname } = url;
   const m = req.method;
   if (m === 'POST' && pathname === '/api/photos/sync') {
@@ -194,7 +199,7 @@ export async function handlePhotos(req, env, url) {
   if (m === 'POST' && r) return assignFolder(r[1], req, env);
   r = /^\/api\/photos\/img\/([\w-]+)$/.exec(pathname);
   if (m === 'GET' && r) {
-    try { return await photoImage(r[1], url, env); } catch (e) { return fail(e.message, 502); }
+    try { return await photoImage(r[1], url, env, ctx); } catch (e) { return fail(e.message, 502); }
   }
   return null;
 }
@@ -214,9 +219,9 @@ export async function saveThumb(itemId, req, env) {
   const photo = await env.DB.prepare('SELECT drive_id FROM photos WHERE drive_id = ? AND item_id = ?').bind(photoId, itemId).first();
   if (!photo) return fail('この商品の写真ではありません');
 
-  const meta = { httpMetadata: { contentType: 'image/jpeg' } };
-  await env.PHOTOS.put(`thumbs/${itemId}.jpg`, await full.arrayBuffer(), meta);
-  await env.PHOTOS.put(`thumbs/${itemId}_s.jpg`, await small.arrayBuffer(), meta);
+  // 保存場所：Workers KV（カード登録のいらない無料の保存場所）
+  await env.STORE.put(`thumbs/${itemId}.jpg`, await full.arrayBuffer());
+  await env.STORE.put(`thumbs/${itemId}_s.jpg`, await small.arrayBuffer());
   const version = Date.now();
   await env.DB.prepare("UPDATE items SET thumb_photo_id = ?, thumb_version = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(photoId, version, itemId).run();
@@ -225,9 +230,9 @@ export async function saveThumb(itemId, req, env) {
 
 export async function getThumb(itemId, url, env) {
   const key = url.searchParams.get('size') === 's' ? `thumbs/${itemId}_s.jpg` : `thumbs/${itemId}.jpg`;
-  const obj = await env.PHOTOS.get(key);
-  if (!obj) return fail('サムネイルがまだありません', 404);
-  return new Response(obj.body, {
+  const body = await env.STORE.get(key, 'arrayBuffer');
+  if (!body) return fail('サムネイルがまだありません', 404);
+  return new Response(body, {
     headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=31536000, immutable' },
   });
 }

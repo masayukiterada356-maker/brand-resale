@@ -4,6 +4,8 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // 画面でも使うプログラム（CSVの読み取りなど）を public/shared/ に写してから動かす
+  "build": { "command": "node scripts/copy-shared.mjs" },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -18,8 +20,9 @@
       "migrations_dir": "migrations"
     }
   ],
-  "r2_buckets": [
-    { "binding": "PHOTOS", "bucket_name": "brand-resale-photos" }
+  // サムネイルの保存場所（Workers KV。無料・カード登録不要）
+  "kv_namespaces": [
+    { "binding": "STORE", "id": "00000000000000000000000000000000" }
   ],
   "vars": {
     // 外注さんの共有フォルダ「寺田 将之さん」

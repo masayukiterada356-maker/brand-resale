@@ -247,19 +247,22 @@ function viewImport() {
       <div class="seg" id="mode">
         <button data-m="csv" class="${importMode === 'csv' ? 'on' : ''}">CSVファイル</button>
         <button data-m="mail" class="${importMode === 'mail' ? 'on' : ''}">メールを貼り付け</button>
+        <button data-m="legacy" class="${importMode === 'legacy' ? 'on' : ''}">前の管理表</button>
       </div>
-      ${importMode === 'csv' ? `
+      ${importMode === 'legacy' ? legacyHtml() : ''}
+      ${importMode === 'legacy' ? '' : importMode === 'csv' ? `
       <label class="file ${imp.filename ? 'has' : ''}" id="file-label">
         <input type="file" id="file" accept=".csv,text/csv">
         <span id="file-name">${imp.filename ? esc(imp.filename) : 'コメ兵・エコリング・ブランドオフのCSVを選ぶ'}</span>
       </label>` : `
       <label class="field"><span>エレノス・サイファーの注文メール、ヤフオクの落札メールの本文</span>
         <textarea id="mail" rows="7" placeholder="注文確認メールの「注文概要」や「商品詳細」の部分を貼り付けてください">${imp.filename === 'メール' ? esc(imp.text) : ''}</textarea></label>`}
+      ${importMode === 'legacy' ? '' : `
       <label class="field" style="margin-top:12px">
         <span>仕入れ日（管理番号の年・月になります）</span>
         <input type="date" id="date" value="${imp.date}">
       </label>
-      <button class="btn" id="go" ${imp.text ? '' : 'disabled'}>中身を確認する</button>
+      <button class="btn" id="go" ${imp.text ? '' : 'disabled'}>中身を確認する</button>`}
     </div>
     <div id="result"></div>`;
 
@@ -286,12 +289,78 @@ function viewImport() {
     document.getElementById('go').disabled = false;
     document.getElementById('result').innerHTML = '';
   });
+  if (importMode === 'legacy') { setupLegacy(); return; }
   document.getElementById('date').addEventListener('change', (ev) => {
     imp.date = ev.target.value;
     if (imp.preview) runPreview();
   });
   document.getElementById('go').addEventListener('click', runPreview);
   if (imp.preview) renderPreview();
+}
+
+/* ---------- 前の管理表（ブランドせどり管理表の在庫管理シート）の取り込み ---------- */
+let legacyData = null;
+
+function legacyHtml() {
+  return `
+    <p class="note" style="margin-top:0">Googleスプレッドシートの「在庫管理」シートを、ファイル → ダウンロード → カンマ区切り形式（.csv）で保存して選んでください。スプレッドシートは変わりません。</p>
+    <label class="file" id="lfile-label"><input type="file" id="lfile" accept=".csv,text/csv"><span id="lfile-name">在庫管理シートのCSVを選ぶ</span></label>
+    <div id="lresult"></div>`;
+}
+
+function setupLegacy() {
+  legacyData = null;
+  api('/api/legacy/status').then((s) => {
+    if (s.items) document.getElementById('lresult').innerHTML = `<p class="note">すでに前の管理表から ${s.items}点 入っています（在庫 ${s.stock}点・販売済み ${s.sold}点）。同じCSVをもう一度入れても、2重にはなりません。</p>`;
+  }).catch(() => {});
+  document.getElementById('lfile').addEventListener('change', async (ev) => {
+    const f = ev.target.files[0];
+    if (!f) return;
+    document.getElementById('lfile-name').textContent = f.name;
+    document.getElementById('lfile-label').classList.add('has');
+    const $r = document.getElementById('lresult');
+    try {
+      const { convert } = await import('/shared/legacy.js');
+      legacyData = convert(decodeBytes(await f.arrayBuffer()));
+    } catch (e) {
+      $r.innerHTML = `<p class="msg" style="color:var(--bad)">${esc(e.message)}</p>`;
+      return;
+    }
+    const items = legacyData.items;
+    const stock = items.filter((i) => i.status !== 'sold');
+    $r.innerHTML = `
+      <div class="sum" style="margin-top:12px">
+        <span class="chip ok">在庫 ${stock.length}点</span>
+        <span class="chip skipped">販売済み ${items.length - stock.length}点</span>
+      </div>
+      <div class="total"><span>在庫の仕入れ値合計</span><span>${yen(stock.reduce((s, i) => s + i.cost, 0))}</span></div>
+      ${legacyData.problems.length ? `<details><summary class="note">確認してほしい行 ${legacyData.problems.length}件</summary>
+        <ul class="note">${legacyData.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></details>` : ''}
+      <button class="btn" id="lgo" style="margin-top:10px">${items.length}点をアプリに入れる</button>
+      <div class="note" id="lprog"></div>`;
+    document.getElementById('lgo').addEventListener('click', runLegacy);
+  });
+}
+
+async function runLegacy() {
+  const btn = document.getElementById('lgo');
+  const $p = document.getElementById('lprog');
+  btn.disabled = true;
+  const items = legacyData.items;
+  let inserted = 0;
+  let skipped = 0;
+  try {
+    for (let i = 0; i < items.length; i += 150) {
+      $p.textContent = `入れています… ${Math.min(i + 150, items.length)} / ${items.length}点`;
+      const r = await api('/api/legacy/import', { method: 'POST', body: JSON.stringify({ items: items.slice(i, i + 150) }) });
+      inserted += r.inserted; skipped += r.skipped;
+    }
+    $p.textContent = `終わりました：新しく入れた ${inserted}点${skipped ? `・すでに入っていた ${skipped}点` : ''}`;
+    toast(`前の管理表から ${inserted}点を入れました`);
+  } catch (e) {
+    $p.textContent = `途中で止まりました（${inserted}点まで入っています）：${e.message}。もう一度押すと続きから入れます`;
+    btn.disabled = false;
+  }
 }
 
 async function runPreview() {

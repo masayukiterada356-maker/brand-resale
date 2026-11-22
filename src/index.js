@@ -3,6 +3,7 @@
 import { buildPreview } from './import.js';
 import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
 import { handleListings } from './listings.js';
+import { handleLegacy } from './legacy-api.js';
 import { handleAgent, agentAuthorized, resetDraft } from './agent.js';
 
 const json = (data, status = 200) =>
@@ -173,13 +174,15 @@ async function getItem(id, env) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const { pathname } = url;
     const m = req.method;
 
     if (pathname.startsWith('/api/')) {
       try {
+        const lg = await handleLegacy(req, env, url);
+        if (lg) return lg;
         const ar = await handleAgent(req, env, url);
         if (ar) return ar;
         const dr = /^\/api\/items\/(\d+)\/drafts\/reset$/.exec(pathname);
@@ -187,7 +190,7 @@ export default {
         const lr = await handleListings(req, env, url);
         if (lr) return lr;
         if (pathname.startsWith('/api/photos/')) {
-          const res = await handlePhotos(req, env, url);
+          const res = await handlePhotos(req, env, url, ctx);
           if (res) return res;
         }
         if (m === 'POST' && pathname === '/api/import/preview') return await importPreview(req, env);
