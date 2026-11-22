@@ -1034,9 +1034,33 @@ function showLogin() {
   });
 }
 
-function viewSettings() {
+async function viewSettings() {
   setHeader('設定', '', true);
+  const g = new URLSearchParams(location.hash.split('?')[1] || '').get('google');
+  if (g) { toast(g === 'ok' ? 'Googleとつながりました' : g); history.replaceState(null, '', '#/settings'); }
+  let c = {};
+  try { c = await api('/api/config'); } catch { /* ログイン画面に移る */ return; }
   $view.innerHTML = `
+    <div class="card">
+      <div class="lhead"><h2>Googleとの接続</h2><span class="chip ${c.google_connected ? 'ok' : 'conflict'}">${c.google_connected ? 'つながっています' : 'まだです'}</span></div>
+      ${c.google_connected ? `<p class="note" style="margin-top:0">${esc(c.google_email || '')}　外注さんの写真（ドライブ）と、売れた通知（Gmailの「${esc(c.gmail_label)}」ラベル）を読みます。読むだけで、変えたり消したりはしません。</p>` : ''}
+      <label class="field"><span>クライアントID（…apps.googleusercontent.com）</span>
+        <input type="text" id="g-id" class="num" value="${esc(c.google_client_id)}" autocomplete="off"></label>
+      <label class="field"><span>クライアント シークレット ${c.has_client_secret ? '<b>（保存済み。変える時だけ入れる）</b>' : ''}</span>
+        <input type="password" id="g-secret" class="num" autocomplete="off" placeholder="${c.has_client_secret ? '••••••••（保存済み）' : ''}"></label>
+      <label class="field"><span>承認済みのリダイレクト URI（Google側に登録する文字）</span>
+        <input type="text" class="num" readonly value="${esc(c.redirect_uri)}" onclick="this.select()"></label>
+      <button class="btn ghost" id="g-save">クライアントを保存</button>
+      <a class="btn" style="margin-top:8px;text-align:center;text-decoration:none" href="/api/google/connect" ${c.google_client_id && c.has_client_secret ? '' : 'hidden'}>${c.google_connected ? 'Googleとつなぎ直す' : 'Googleとつなぐ'}</a>
+      ${c.google_connected ? '<button class="btn ghost" id="g-check" style="margin-top:8px">今すぐGmailとドライブを確認する</button>' : ''}
+    </div>
+    <div class="card">
+      <div class="lhead"><h2>Geminiの鍵</h2><span class="chip ${c.has_gemini ? 'ok' : 'conflict'}">${c.has_gemini ? '保存済み' : 'まだです'}</span></div>
+      <label class="field"><span>APIキー ${c.has_gemini ? '<b>（変える時だけ入れる）</b>' : ''}</span>
+        <input type="password" id="gm-key" class="num" autocomplete="off"></label>
+      <button class="btn ghost" id="gm-save">鍵を保存</button>
+    </div>`
+    + `
     <div class="card">
       <h2>パスワードを変える</h2>
       <label class="field"><span>今のパスワード</span><input type="password" id="pw-cur" autocomplete="current-password"></label>
@@ -1045,6 +1069,27 @@ function viewSettings() {
       <p class="note">変えると、ほかの端末ではログインし直しになります。</p>
     </div>
     <button class="btn ghost" id="logout">ログアウト</button>`;
+  document.getElementById('g-save').addEventListener('click', async () => {
+    try {
+      await api('/api/config', { method: 'PUT', body: JSON.stringify({ google_client_id: document.getElementById('g-id').value, google_client_secret: document.getElementById('g-secret').value }) });
+      toast('保存しました'); viewSettings();
+    } catch (e) { toast(e.message); }
+  });
+  document.getElementById('gm-save').addEventListener('click', async () => {
+    try {
+      await api('/api/config', { method: 'PUT', body: JSON.stringify({ gemini_api_key: document.getElementById('gm-key').value }) });
+      toast('Geminiの鍵を保存しました'); viewSettings();
+    } catch (e) { toast(e.message); }
+  });
+  document.getElementById('g-check')?.addEventListener('click', async (ev) => {
+    ev.target.disabled = true; ev.target.textContent = '確認中…';
+    try {
+      const m = await api('/api/sales/gmail-check', { method: 'POST' });
+      const d = await api('/api/photos/sync', { method: 'POST' });
+      toast(`Gmail：${m.skipped || `${m.checked}通（記録 ${m.matched}・確認待ち ${m.pending}）`}／写真：新しいフォルダ ${d.new_folders}個`);
+    } catch (e) { toast(e.message); }
+    ev.target.disabled = false; ev.target.textContent = '今すぐGmailとドライブを確認する';
+  });
   document.querySelectorAll('#pw-cur, #pw-new').forEach((el) => Object.assign(el.style, { width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--line)', background: 'var(--bg)', fontSize: '16px' }));
   document.getElementById('pw-save').addEventListener('click', async () => {
     try {
@@ -1066,7 +1111,7 @@ function route() {
   window.scrollTo(0, 0);
   if (m) return viewItem(m[1]);
   if (h === '#/import') return viewImport();
-  if (h === '#/settings') return viewSettings();
+  if (h.startsWith('#/settings')) return viewSettings();
   if (h === '#/sold-inbox') return viewSoldInbox();
   const pm = /^#\/photos\/([\w-]+)$/.exec(h);
   if (pm) return viewFolder(pm[1]);

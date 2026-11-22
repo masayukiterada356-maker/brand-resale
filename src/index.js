@@ -6,6 +6,7 @@ import { handleListings } from './listings.js';
 import { handleLegacy } from './legacy-api.js';
 import { handleSales } from './sales.js';
 import { checkGmail } from './gmail.js';
+import { withConfig, handleConfig } from './config.js';
 import { handleAuth, isLoggedIn } from './auth.js';
 import STATIC from './static-files.js';
 import { handleAgent, agentAuthorized, resetDraft } from './agent.js';
@@ -204,9 +205,12 @@ export default {
         if (!(agentPaths && agentAuthorized(req, env)) && !pathname.startsWith('/api/agent/') && !(await isLoggedIn(req, env))) {
           return fail('ログインしてください', 401);
         }
+        env = await withConfig(env);
         if (pathname === '/api/sales/gmail-check' && m === 'POST') {
           try { return json(await checkGmail(env)); } catch (e) { return fail(e.message, 502); }
         }
+        const cf = await handleConfig(req, env, url);
+        if (cf) return cf;
         const sr = await handleSales(req, env, url);
         if (sr) return sr;
         const lg = await handleLegacy(req, env, url);
@@ -245,6 +249,7 @@ export default {
 
   // 1時間ごとにドライブを確認して、新しい写真フォルダを取り込む
   async scheduled(event, env, ctx) {
+    env = await withConfig(env);
     ctx.waitUntil(syncDrive(env).catch((e) => console.error('写真の取り込みに失敗', e.message)));
     ctx.waitUntil(checkGmail(env).catch((e) => console.error('Gmailの確認に失敗', e.message)));
   },
