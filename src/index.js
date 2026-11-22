@@ -4,7 +4,7 @@ import { buildPreview } from './import.js';
 import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
 import { handleListings } from './listings.js';
 import { handleLegacy } from './legacy-api.js';
-import { handleSales } from './sales.js';
+import { handleSales, breakEven } from './sales.js';
 import { checkGmail } from './gmail.js';
 import { withConfig, handleConfig } from './config.js';
 import { handleAuth, isLoggedIn } from './auth.js';
@@ -175,7 +175,9 @@ async function getItem(id, env) {
       FROM photos p JOIN photo_folders f ON f.drive_id = p.folder_id
       WHERE p.item_id = ? ORDER BY f.shoot_date, p.position`).bind(id).all();
   const sale = await env.DB.prepare('SELECT * FROM sales WHERE item_id = ?').bind(id).first();
-  return json({ ...parseItem(r), photos, sale: sale || null });
+  const lt = await env.DB.prepare('SELECT title, price FROM listings WHERE item_id = ?').bind(id).first();
+  return json({ ...parseItem(r), photos, sale: sale || null,
+    break_even: breakEven({ ...r, listing_title: lt?.title }), listing_price: lt?.price ?? null });
 }
 
 // 画面のファイル（public/ の中身。Workerの中に入れてある）

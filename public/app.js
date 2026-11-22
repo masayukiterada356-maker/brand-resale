@@ -178,6 +178,7 @@ async function viewItem(id) {
           ${it.sale.likes != null ? `<dt>いいね・閲覧</dt><dd>${it.sale.likes ?? '—'}・${it.sale.views ?? '—'}</dd>` : ''}
         </dl>
       </div>` : ''}
+      ${it.status !== 'sold' ? '<div class="card" id="be-card"></div>' : ''}
       ${it.status === 'sold' ? '<button class="linkbtn" id="undo-sold">「売れた」を取り消す</button>' : '<div class="card" id="sold-card"><button class="btn" id="sold-open">売れた</button></div><div id="listing"></div>'}
       <div class="card">
         <h2>仕入れ</h2>
@@ -212,6 +213,7 @@ async function viewItem(id) {
       await setThumb(it.id, b.dataset.photo, true);
     }));
     renderInvoice(it);
+    renderBreakEven(it, it.break_even);
     document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
     if (document.getElementById('ship-types')) {
       api('/api/sales/config').then((cfg) => {
@@ -539,6 +541,35 @@ async function loadInbox() {
   $l.querySelectorAll('[data-ignore]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/sales/inbox/${b.dataset.ignore}`, { method: 'POST', body: JSON.stringify({ ignore: true }) });
     loadInbox();
+  }));
+}
+
+/* ---------- 損益分岐点 ---------- */
+const SHIP_TYPES = ['ネコポス', '宅急便コンパクト', '60サイズ', '80サイズ', '100サイズ'];
+function renderBreakEven(it, be) {
+  const $c = document.getElementById('be-card');
+  if (!$c || !be) return;
+  // 今の出品価格（メルカリ）があれば、その価格での利益も出す（ラクマ・ヤフーは1,000円引き）
+  const listPrice = { 'メルカリ': it.listing_price || it.start_price || null };
+  if (listPrice['メルカリ']) { listPrice['ラクマ'] = listPrice['メルカリ'] - 1000; listPrice['ヤフーフリマ'] = listPrice['メルカリ'] - 1000; }
+  const profitAt = (p, x) => x - Math.floor(x * p.rate) - p.shipping - p.packing - p.photo_fee - be.cost;
+  $c.innerHTML = `
+    <div class="lhead"><h2>損益分岐点</h2><span class="note">これより安く売ると赤字</span></div>
+    <table class="be">
+      <tr><th></th><th>損益分岐点</th>${listPrice['メルカリ'] ? `<th>${it.listing_price ? '出品価格' : 'スタート価格'}での利益</th>` : ''}</tr>
+      ${Object.entries(be.platforms).map(([name, p]) => `
+        <tr><td>${name}<small>手数料${Math.round(p.rate * 100)}%</small></td>
+          <td class="yen">${yen(p.price)}</td>
+          ${listPrice[name] ? `<td class="yen ${profitAt(p, listPrice[name]) < 0 ? 'neg' : ''}">${yen(profitAt(p, listPrice[name]))}<small>${yen(listPrice[name])}の時</small></td>` : ''}</tr>`).join('')}
+    </table>
+    <label class="field" style="margin-top:10px"><span>発送の種類（予定）${be.guessed ? '<b>・商品の種類から推測</b>' : ''}</span>
+      <div class="chips" id="be-types">${SHIP_TYPES.map((t) => `<button type="button" class="chip-btn ${t === be.ship_type ? 'on' : ''}" data-t="${t}">${t}</button>`).join('')}</div></label>
+    <p class="note">計算：（仕入れ値 ${yen(be.cost)}＋撮影代 ${yen(900)}＋送料＋梱包材）÷（1－手数料率）</p>`;
+  $c.querySelectorAll('#be-types button').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      const r = await api(`/api/items/${it.id}/ship-type`, { method: 'PUT', body: JSON.stringify({ ship_type: b.dataset.t }) });
+      it.break_even = r; renderBreakEven(it, r);
+    } catch (e) { toast(e.message); }
   }));
 }
 

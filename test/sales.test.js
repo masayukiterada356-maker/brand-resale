@@ -23,3 +23,15 @@ import { PACKING } from '../src/sales.js';
 test('梱包材：ネコポス・コンパクトは80円、段ボールは100円', () => {
   assert.deepEqual(PACKING, { 'ネコポス': 80, '宅急便コンパクト': 80, '60サイズ': 100, '80サイズ': 100, '100サイズ': 100 });
 });
+
+import { breakEven, guessShipType } from '../src/sales.js';
+test('損益分岐点：（仕入れ値＋撮影代＋送料＋梱包材）÷（1－手数料率）', () => {
+  // 管理表の EFJ2260 と同じ：仕入れ155,100・100サイズ → (155100+900+1050+100)/0.9
+  const b = breakEven({ cost: 155100 }, '100サイズ');
+  assert.equal(b.platforms['メルカリ'].price, Math.ceil((155100 + 900 + 1050 + 100) / 0.9));
+  assert.equal(b.platforms['ヤフーフリマ'].price, Math.ceil((155100 + 900 + 1050 + 100) / 0.95));
+  assert.equal(b.platforms['ラクマ'].price, Math.ceil((155100 + 900 + 1050 + 100) / 0.9));
+  assert.equal(guessShipType({ name: 'TIFFANY オープンハート ネックレス' }), '宅急便コンパクト');
+  assert.equal(guessShipType({ name: 'LOEWE トートバッグ' }), '60サイズ');
+  assert.equal(guessShipType({ category: 'キャリーケース/旅行用バッグ' }), '80サイズ');
+});

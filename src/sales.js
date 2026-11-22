@@ -22,6 +22,33 @@ export const SHIPPING = {
 // 発送の種類ごとの梱包材（フリマ共通）
 export const PACKING = { 'ネコポス': 80, '宅急便コンパクト': 80, '60サイズ': 100, '80サイズ': 100, '100サイズ': 100 };
 
+// 撮影代（外注さん）
+export const PHOTO_FEE = 900;
+
+// 発送の種類を、商品の種類から推測する（商品ごとに選び直せる）
+export function guessShipType(item) {
+  const t = `${item.category || ''} ${item.name || ''} ${item.listing_title || ''}`.normalize('NFKC');
+  if (/ボストン|キャリー|スーツケース|旅行|トラベル|コート|ダウン|ブーツ/.test(t)) return '80サイズ';
+  if (/トート|ハンドバッグ|ショルダー|リュック|バックパック|ボディ|クロスボディ|バッグ|かご/.test(t) && !/ポーチ|ミニ|クラッチ/.test(t)) return '60サイズ';
+  if (/財布|ウォレット|コインケース|カードケース|キーケース|ネックレス|リング|指輪|ピアス|イヤリング|ブレスレット|バングル|時計|ポーチ|クラッチ|スカーフ|ベルト|サングラス|メガネ|ストラップ|チャーム|カチューシャ|ヘア|小物|アクセサリー/.test(t)) return '宅急便コンパクト';
+  return '60サイズ';
+}
+
+// 損益分岐点：これより安く売ると赤字になる金額（フリマごと）
+//   ＝（仕入れ値＋撮影代＋送料＋梱包材）÷（1－手数料率）を、1円単位で切り上げ
+export function breakEven(item, shipType) {
+  const type = shipType || item.ship_type || guessShipType(item);
+  const out = {};
+  for (const platform of ['メルカリ', 'ラクマ', 'ヤフーフリマ']) {
+    const rate = FEE_RATE[platform] ?? 0;
+    const shipping = SHIPPING[type]?.[platform] ?? 0;
+    const packing = PACKING[type] ?? 0;
+    const base = (item.cost || 0) + PHOTO_FEE + shipping + packing;
+    out[platform] = { price: Math.ceil(base / (1 - rate)), rate, shipping, packing, photo_fee: PHOTO_FEE };
+  }
+  return { ship_type: type, guessed: !shipType && !item.ship_type, cost: item.cost, platforms: out };
+}
+
 const int = (v) => (v === '' || v === null || v === undefined ? null : Math.round(Number(v)));
 
 export function calcSale(b, cost) {
@@ -179,6 +206,15 @@ export async function handleSales(req, env, url) {
   let r = /^\/api\/items\/(\d+)\/sold$/.exec(url.pathname);
   if (r && req.method === 'POST') return markSold(Number(r[1]), req, env);
   if (r && req.method === 'DELETE') return undoSold(Number(r[1]), env);
+  r = /^\/api\/items\/(\d+)\/ship-type$/.exec(url.pathname);
+  if (r && req.method === 'PUT') {
+    const b = await req.json().catch(() => ({}));
+    if (b.ship_type && !SHIPPING[b.ship_type]) return fail('発送の種類が正しくありません');
+    await env.DB.prepare("UPDATE items SET ship_type = ?, updated_at = datetime('now') WHERE id = ?").bind(b.ship_type || null, Number(r[1])).run();
+    const item = await env.DB.prepare(`SELECT i.id, i.cost, i.category, i.name, i.ship_type, l.title AS listing_title
+        FROM items i LEFT JOIN listings l ON l.item_id = i.id WHERE i.id = ?`).bind(Number(r[1])).first();
+    return json(breakEven(item));
+  }
   r = /^\/api\/items\/(\d+)\/shipping$/.exec(url.pathname);
   if (r && req.method === 'POST') return updateShipping(Number(r[1]), req, env);
   if (url.pathname === '/api/sales/config' && req.method === 'GET') return json({ fee_rate: FEE_RATE, shipping: SHIPPING, packing: PACKING });
