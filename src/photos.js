@@ -84,7 +84,7 @@ export async function syncDrive(env) {
 async function listFolders(url, env) {
   const status = url.searchParams.get('status') || 'unassigned';
   const where = status === 'all' ? '' : 'WHERE f.status = ?';
-  const stmt = env.DB.prepare(`SELECT f.drive_id, f.date_label, f.number, f.shoot_date, f.status,
+  const stmt = env.DB.prepare(`SELECT f.drive_id, f.date_folder_id, f.date_label, f.number, f.shoot_date, f.status,
         f.photo_count, f.first_photo_id, f.item_id, i.mgmt_no, i.brand
       FROM photo_folders f LEFT JOIN items i ON i.id = f.item_id
       ${where}
@@ -197,6 +197,13 @@ export async function handlePhotos(req, env, url, ctx) {
   if (m === 'GET' && r) return getFolder(r[1], env);
   r = /^\/api\/photos\/folders\/([\w-]+)\/assign$/.exec(pathname);
   if (m === 'POST' && r) return assignFolder(r[1], req, env);
+  // 日付フォルダごと、まとめて対象外にする（すでに今までのやり方で出品した撮影分など）
+  r = /^\/api\/photos\/dates\/([\w-]+)\/ignore$/.exec(pathname);
+  if (m === 'POST' && r) {
+    const res = await env.DB.prepare("UPDATE photo_folders SET status = 'ignored', ai_item_id = NULL WHERE date_folder_id = ? AND status = 'unassigned'")
+      .bind(r[1]).run();
+    return json({ ok: true, ignored: res.meta?.changes ?? 0 });
+  }
   r = /^\/api\/photos\/img\/([\w-]+)$/.exec(pathname);
   if (m === 'GET' && r) {
     try { return await photoImage(r[1], url, env, ctx); } catch (e) { return fail(e.message, 502); }

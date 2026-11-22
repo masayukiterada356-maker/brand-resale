@@ -2,6 +2,8 @@
 // ・鍵はデータベースに「暗号化して」保存する（暗号の鍵は Workerのシークレット SESSION_KEY から作る）
 // ・Workerのシークレットに同じ名前があれば、そちらを優先する
 
+import { pickModel, probeGemini } from './gemini.js';
+
 const enc = new TextEncoder();
 const KEYS = {
   GOOGLE_CLIENT_ID: 'google_client_id',
@@ -75,6 +77,7 @@ async function status(env, url) {
     google_connected: !!env.GOOGLE_REFRESH_TOKEN,
     google_email: await getSetting(env, 'google_email'),
     has_gemini: !!env.GEMINI_API_KEY,
+    gemini_model: env.GEMINI_API_KEY ? await pickModel(env).catch((e) => `（${e.message}）`) : null,
     gmail_label: env.GMAIL_LABEL || '',
     drive_folder: env.DRIVE_ROOT_FOLDER_ID || '',
   });
@@ -163,5 +166,9 @@ export async function handleConfig(req, env, url) {
   if (p === '/api/google/connect' && req.method === 'GET') return connect(env, url);
   if (p === '/api/google/callback' && req.method === 'GET') return callback(env, req, url);
   if (p === '/api/google/disconnect' && req.method === 'POST') return disconnect(env);
+  if (p === '/api/gemini/probe' && req.method === 'POST') {
+    if (!env.GEMINI_API_KEY) return fail('Geminiの鍵がまだです');
+    try { return json({ results: await probeGemini(env) }); } catch (e) { return fail(e.message, 502); }
+  }
   return null;
 }

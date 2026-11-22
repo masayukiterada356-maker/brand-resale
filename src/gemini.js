@@ -123,20 +123,67 @@ ${EXAMPLE}
 ${JSON.stringify(info, null, 2)}`;
 }
 
-async function callGemini(env, parts, schema) {
-  const model = env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const res = await fetch(`${API}/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts }],
-      generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.4 },
-    }),
-  });
+// 使うモデル：GEMINI_MODEL があればそれ。なければ、その鍵で使える「flash」を新しい順に選ぶ
+// （一番新しいものが混み合っている時は、次のものを使う）
+let modelList = null;
+export async function modelCandidates(env) {
+  if (env.GEMINI_MODEL) return [env.GEMINI_MODEL];
+  if (modelList) return modelList;
+  const res = await fetch(`${API}?pageSize=200`, { headers: { 'x-goog-api-key': env.GEMINI_API_KEY } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Geminiのエラー：${data.error?.message || res.status}`);
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-  try { return JSON.parse(text); } catch { throw new Error('Geminiの答えを読めませんでした。もう一度お試しください'); }
+  if (!res.ok) throw new Error(`Geminiのモデル一覧を読めません：${data.error?.message || res.status}`);
+  const ok = (data.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m) => m.name.replace(/^models\//, ''));
+  const ver = (n) => Number((/gemini-(\d+(?:\.\d+)?)/.exec(n) || [])[1] || 0);
+  const plain = ok.filter((n) => /^gemini-[\d.]+-flash$/.test(n)).sort((a, b) => ver(b) - ver(a));
+  const lite = ok.filter((n) => /^gemini-[\d.]+-flash-lite$/.test(n)).sort((a, b) => ver(b) - ver(a));
+  modelList = [...plain.slice(0, 3), ...lite.slice(0, 1)];
+  if (!modelList.length) { modelList = null; throw new Error('使えるGeminiのモデルが見つかりません'); }
+  return modelList;
+}
+export async function pickModel(env) { return (await modelCandidates(env))[0]; }
+
+async function callGemini(env, parts, schema) {
+  const models = await modelCandidates(env);
+  let lastError = '';
+  for (const model of models) {
+    // 混み合っている時（503・429）は少し待って1回やり直し、だめなら次のモデルへ
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // 答えが返ってこないモデルもあるので、40秒で区切って次へ
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 40000);
+      let res;
+      try {
+        res = await fetch(`${API}/${model}:generateContent`, {
+          method: 'POST',
+          signal: ctl.signal,
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.4 },
+          }),
+        });
+      } catch (e) {
+        lastError = e.name === 'AbortError' ? `${model} が40秒で答えませんでした` : e.message;
+        break; // 次のモデルへ
+      } finally { clearTimeout(timer); }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        // うまく答えたモデルを、次から先に使う
+        if (modelList && modelList[0] !== model) modelList = [model, ...modelList.filter((m) => m !== model)];
+        const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+        try { return JSON.parse(text); } catch { throw new Error('Geminiの答えを読めませんでした。もう一度お試しください'); }
+      }
+      lastError = data.error?.message || String(res.status);
+      if ([429, 503].includes(res.status)) { await new Promise((r) => setTimeout(r, 1500)); continue; }
+      if ([400, 404].includes(res.status) && /model/i.test(lastError)) break; // このモデルは使えない → 次へ
+      if (res.status >= 500) break; // Google側の不調 → 次のモデルへ
+      throw new Error(`Geminiのエラー：${lastError}`);
+    }
+  }
+  throw new Error(/demand|overload|429|503|答えません/i.test(lastError)
+    ? 'Geminiが混み合っています。少し時間をおいて、もう一度お試しください'
+    : `Geminiのエラー：${lastError}`);
 }
 
 // 画像を Gemini に渡せる形にする
@@ -207,4 +254,27 @@ function mockMatch(candidates) {
   return c
     ? { mgmt_no: c.mgmt_no, confidence: 0.82, reason: `（ダミー）写真の形と色が ${c.brand} の${c.category || '商品'}に近いです。` }
     : { mgmt_no: '', confidence: 0, reason: '（ダミー）候補がありません' };
+}
+
+// 設定画面の「Geminiを試す」：使えるモデルに短い質問をして、答えるまでの時間を測る
+export async function probeGemini(env) {
+  const models = await modelCandidates(env);
+  const out = [];
+  for (const model of models) {
+    const t = Date.now();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 25000);
+    try {
+      const res = await fetch(`${API}/${model}:generateContent`, {
+        method: 'POST', signal: ctl.signal,
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: '「はい」とだけ答えてください' }] }] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      out.push({ model, status: res.status, ms: Date.now() - t, answer: data.candidates?.[0]?.content?.parts?.[0]?.text?.slice(0, 20) || data.error?.message?.slice(0, 120) || '' });
+    } catch (e) {
+      out.push({ model, status: 'timeout', ms: Date.now() - t, answer: e.name === 'AbortError' ? '25秒で答えがありません' : e.message });
+    } finally { clearTimeout(timer); }
+  }
+  return out;
 }

@@ -888,16 +888,22 @@ async function loadFolders() {
     for (const f of d.folders) {
       const g = groups.at(-1);
       if (g && g.label === f.date_label && g.date === f.shoot_date) g.list.push(f);
-      else groups.push({ label: f.date_label, date: f.shoot_date, list: [f] });
+      else groups.push({ label: f.date_label, date: f.shoot_date, dateId: f.date_folder_id, list: [f] });
     }
     $f.innerHTML = groups.map((g) => `
-      <div class="date-h">${esc(g.label)} の撮影・${g.list.length}点</div>
+      <div class="date-h">${esc(g.label)} の撮影・${g.list.length}点
+        ${photoFilter === 'unassigned' ? `<button class="linkbtn" data-ignore-date="${esc(g.dateId)}" data-label="${esc(g.label)}" style="float:right;padding:0">まとめて対象外</button>` : ''}</div>
       <div class="grid">${g.list.map((f) => `
         <a class="tile ${f.status}" href="#/photos/${esc(f.drive_id)}">
           ${f.first_photo_id ? `<img src="/api/photos/img/${esc(f.first_photo_id)}?s=300" alt="" loading="lazy">` : '<div class="ph"></div>'}
           <span class="no">${esc(f.number)}</span>
           <div class="cap">${f.mgmt_no ? `<span class="mgmt">${esc(f.mgmt_no)}</span>` : `<span>${f.photo_count}枚</span>`}</div>
         </a>`).join('')}</div>`).join('');
+    $f.querySelectorAll('[data-ignore-date]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm(`${b.dataset.label} の撮影分を、まとめて対象外にします（すでに出品済みの撮影分など）。よろしいですか？`)) return;
+      const r = await api(`/api/photos/dates/${b.dataset.ignoreDate}/ignore`, { method: 'POST' });
+      toast(`${r.ignored}個を対象外にしました`); loadFolders(); refreshBadge();
+    }));
   } catch (e) {
     $f.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
@@ -1068,6 +1074,7 @@ async function viewSettings() {
       <label class="field"><span>APIキー ${c.has_gemini ? '<b>（変える時だけ入れる）</b>' : ''}</span>
         <input type="password" id="gm-key" class="num" autocomplete="off"></label>
       <button class="btn ghost" id="gm-save">鍵を保存</button>
+      ${c.has_gemini ? `<p class="note">使うモデル：${esc(c.gemini_model || '')}</p><button class="btn ghost" id="gm-probe">Geminiを試す</button><div id="gm-probe-out" class="note"></div>` : ''}
     </div>`
     + `
     <div class="card">
@@ -1089,6 +1096,14 @@ async function viewSettings() {
       await api('/api/config', { method: 'PUT', body: JSON.stringify({ gemini_api_key: document.getElementById('gm-key').value }) });
       toast('Geminiの鍵を保存しました'); viewSettings();
     } catch (e) { toast(e.message); }
+  });
+  document.getElementById('gm-probe')?.addEventListener('click', async (ev) => {
+    ev.target.disabled = true; ev.target.textContent = '試しています…（最大1分ほど）';
+    try {
+      const r = await api('/api/gemini/probe', { method: 'POST' });
+      document.getElementById('gm-probe-out').innerHTML = r.results.map((x) => `${esc(x.model)}：${x.status === 200 ? `◎ ${(x.ms / 1000).toFixed(1)}秒` : `× ${esc(String(x.status))} ${esc(x.answer)}`}`).join('<br>');
+    } catch (e) { toast(e.message); }
+    ev.target.disabled = false; ev.target.textContent = 'Geminiを試す';
   });
   document.getElementById('g-check')?.addEventListener('click', async (ev) => {
     ev.target.disabled = true; ev.target.textContent = '確認中…';
