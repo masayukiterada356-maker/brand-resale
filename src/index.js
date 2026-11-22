@@ -4,6 +4,7 @@ import { buildPreview } from './import.js';
 import { handlePhotos, syncDrive, saveThumb, getThumb } from './photos.js';
 import { handleListings } from './listings.js';
 import { handleLegacy } from './legacy-api.js';
+import { handleSales } from './sales.js';
 import { handleAuth, isLoggedIn } from './auth.js';
 import STATIC from './static-files.js';
 import { handleAgent, agentAuthorized, resetDraft } from './agent.js';
@@ -202,6 +203,8 @@ export default {
         if (!(agentPaths && agentAuthorized(req, env)) && !pathname.startsWith('/api/agent/') && !(await isLoggedIn(req, env))) {
           return fail('ログインしてください', 401);
         }
+        const sr = await handleSales(req, env, url);
+        if (sr) return sr;
         const lg = await handleLegacy(req, env, url);
         if (lg) return lg;
         const ar = await handleAgent(req, env, url);

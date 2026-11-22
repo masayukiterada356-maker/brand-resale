@@ -148,6 +148,7 @@ async function viewItem(id) {
           <dt>売れた場所</dt><dd>${esc(it.sale.platform || '')}</dd>
           <dt>売れた日</dt><dd>${esc(it.sale.sold_date || '')}（${it.days}日）</dd>
           <dt>販売価格</dt><dd>${yen(it.sale.price)}</dd>
+          ${it.sale.fee != null ? `<dt>手数料</dt><dd>${yen(it.sale.fee)}</dd>` : ''}
           <dt>送料</dt><dd>${yen(it.sale.shipping)}</dd>
           <dt>入金額</dt><dd>${yen(it.sale.payout)}</dd>
           <dt>梱包材</dt><dd>${yen(it.sale.packing)}</dd>
@@ -158,7 +159,7 @@ async function viewItem(id) {
           ${it.sale.likes != null ? `<dt>いいね・閲覧</dt><dd>${it.sale.likes ?? '—'}・${it.sale.views ?? '—'}</dd>` : ''}
         </dl>
       </div>` : ''}
-      ${it.status === 'sold' ? '' : '<div id="listing"></div>'}
+      ${it.status === 'sold' ? '<button class="linkbtn" id="undo-sold">「売れた」を取り消す</button>' : '<div class="card" id="sold-card"><button class="btn" id="sold-open">売れた</button></div><div id="listing"></div>'}
       <div class="card">
         <h2>仕入れ</h2>
         <dl class="kv">
@@ -192,6 +193,11 @@ async function viewItem(id) {
       await setThumb(it.id, b.dataset.photo, true);
     }));
     renderInvoice(it);
+    document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
+    document.getElementById('undo-sold')?.addEventListener('click', async () => {
+      if (!confirm('「売れた」の記録を取り消して、在庫に戻します。よろしいですか？')) return;
+      try { await api(`/api/items/${it.id}/sold`, { method: 'DELETE' }); toast('在庫に戻しました'); viewItem(it.id); } catch (e) { toast(e.message); }
+    });
     loadListing(it);
     // 写真はあるのにサムネイルがまだない時は、1枚目で作る
     if (it.photos.length && !it.thumb_version) await setThumb(it.id, it.photos[0].drive_id, false);
@@ -443,6 +449,77 @@ async function runCommit() {
 }
 
 
+/* ---------- 売れた ---------- */
+let saleConfig = null;
+async function openSold(it) {
+  if (!saleConfig) saleConfig = await api('/api/sales/config');
+  const $c = document.getElementById('sold-card');
+  const places = ['メルカリ', 'ラクマ', 'ヤフーフリマ', 'その他'];
+  const types = Object.keys(saleConfig.shipping);
+  const inp = (id, v = '', extra = '') => `<input type="number" inputmode="numeric" id="${id}" value="${v}" ${extra} class="num">`;
+  $c.innerHTML = `
+    <h2>売れた</h2>
+    <label class="field"><span>売れた場所</span>
+      <div class="seg" id="s-place">${places.map((p, i) => `<button type="button" data-p="${p}" class="${i === 0 ? 'on' : ''}">${p}</button>`).join('')}</div>
+      <input type="text" id="s-other" placeholder="売れた場所（友人の名前・お店など）" hidden></label>
+    <label class="field"><span>売れた日</span><input type="date" id="s-date" value="${todayJst()}"></label>
+    <label class="field"><span>販売価格（円）</span>${inp('s-price', '')}</label>
+    <label class="field"><span>発送の種類（選ぶと送料が入ります）</span>
+      <div class="chips" id="s-type">${types.map((t) => `<button type="button" data-t="${t}" class="chip-btn">${t}</button>`).join('')}<button type="button" data-t="" class="chip-btn">手渡し・なし</button></div></label>
+    <div class="grid2">
+      <label class="field"><span>手数料</span>${inp('s-fee')}</label>
+      <label class="field"><span>送料</span>${inp('s-ship', 0)}</label>
+      <label class="field"><span>梱包材</span>${inp('s-pack', 0)}</label>
+      <label class="field"><span>撮影代</span>${inp('s-photo', 900)}</label>
+    </div>
+    <div class="total"><span>入金額</span><span id="s-payout">—</span></div>
+    <div class="total" style="border-top:0;padding-top:0"><span>利益（仕入れ値 ${yen(it.cost)} を引いた後）</span><span id="s-profit">—</span></div>
+    <button class="btn" id="s-save">売れたとして記録する</button>
+    <button class="linkbtn" id="s-cancel">やめる</button>`;
+  let place = places[0];
+  let feeTouched = false;
+  let shipType = null;
+  const $ = (id) => document.getElementById(id);
+  const upd = () => {
+    const price = Number($('s-price').value) || 0;
+    const rate = saleConfig.fee_rate[place] ?? 0;
+    if (!feeTouched) $('s-fee').value = price ? Math.floor(price * rate) : '';
+    if (shipType) $('s-ship').value = saleConfig.shipping[shipType]?.[place] ?? $('s-ship').value;
+    const payout = price - (Number($('s-fee').value) || 0) - (Number($('s-ship').value) || 0);
+    const profit = payout - it.cost - (Number($('s-pack').value) || 0) - (Number($('s-photo').value) || 0);
+    $('s-payout').textContent = price ? yen(payout) : '—';
+    $('s-profit').textContent = price ? yen(profit) : '—';
+    $('s-profit').className = profit < 0 ? 'neg' : '';
+  };
+  $c.querySelectorAll('#s-place button').forEach((b) => b.addEventListener('click', () => {
+    place = b.dataset.p;
+    $c.querySelectorAll('#s-place button').forEach((x) => x.classList.toggle('on', x === b));
+    $('s-other').hidden = place !== 'その他';
+    upd();
+  }));
+  $c.querySelectorAll('#s-type button').forEach((b) => b.addEventListener('click', () => {
+    shipType = b.dataset.t || null;
+    $c.querySelectorAll('#s-type button').forEach((x) => x.classList.toggle('on', x === b));
+    if (!shipType) $('s-ship').value = 0;
+    upd();
+  }));
+  $('s-fee').addEventListener('input', () => { feeTouched = true; upd(); });
+  ['s-price', 's-ship', 's-pack', 's-photo'].forEach((id) => $(id).addEventListener('input', upd));
+  $('s-cancel').addEventListener('click', () => viewItem(it.id));
+  $('s-save').addEventListener('click', async () => {
+    const platform = place === 'その他' ? $('s-other').value.trim() : place;
+    try {
+      const r = await api(`/api/items/${it.id}/sold`, { method: 'POST', body: JSON.stringify({
+        platform, sold_date: $('s-date').value, price: $('s-price').value, fee: $('s-fee').value, shipping: $('s-ship').value,
+        packing: $('s-pack').value, photo_fee: $('s-photo').value, ship_type: shipType,
+      }) });
+      toast(`売れたとして記録しました（利益 ${yen(r.profit)}）`);
+      viewItem(it.id);
+    } catch (e) { toast(e.message); }
+  });
+  upd();
+}
+
 /* ---------- 仕入れ先のインボイス ---------- */
 function renderInvoice(it) {
   const $c = document.getElementById('invoice-card');
@@ -476,6 +553,11 @@ function renderInvoice(it) {
       $c.classList.remove('need');
       toast('インボイスの情報を保存しました');
       renderInvoice(it);
+    document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
+    document.getElementById('undo-sold')?.addEventListener('click', async () => {
+      if (!confirm('「売れた」の記録を取り消して、在庫に戻します。よろしいですか？')) return;
+      try { await api(`/api/items/${it.id}/sold`, { method: 'DELETE' }); toast('在庫に戻しました'); viewItem(it.id); } catch (e) { toast(e.message); }
+    });
     } catch (e) { toast(e.message); }
   });
 }
@@ -613,6 +695,11 @@ async function generateListing(it) {
   } catch (e) {
     toast(e.message);
     renderInvoice(it);
+    document.getElementById('sold-open')?.addEventListener('click', () => openSold(it));
+    document.getElementById('undo-sold')?.addEventListener('click', async () => {
+      if (!confirm('「売れた」の記録を取り消して、在庫に戻します。よろしいですか？')) return;
+      try { await api(`/api/items/${it.id}/sold`, { method: 'DELETE' }); toast('在庫に戻しました'); viewItem(it.id); } catch (e) { toast(e.message); }
+    });
     loadListing(it);
   }
 }
