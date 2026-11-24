@@ -89,6 +89,14 @@ async function importCommit(req, env) {
     return fail(`登録できませんでした：${e.message}`, 409);
   }
 
+  // 仕入れ先のインボイス登録番号を、取り込んだ商品に自動で付ける（ヤフオクは出品者ごとなので手で入れる）
+  await env.DB.prepare(`UPDATE items SET
+      invoice_no = (SELECT s.invoice_no FROM suppliers s WHERE s.code = items.supplier_code),
+      invoice_status = 'registered',
+      seller_name = COALESCE(seller_name, (SELECT s.name FROM suppliers s WHERE s.code = items.supplier_code))
+    WHERE import_batch_id = ? AND invoice_status IS NULL
+      AND (SELECT s.invoice_no FROM suppliers s WHERE s.code = items.supplier_code) IS NOT NULL`).bind(batch.id).run();
+
   return json({
     batch_id: batch.id,
     inserted: rows.length,

@@ -780,6 +780,7 @@ function renderInvoice(it) {
     <div class="lhead"><h2>仕入れ先のインボイス</h2>
       <span class="chip ${st ? 'ok' : it.supplier_code === 'Y' ? 'conflict' : 'skipped'}">${st ? '記録済み' : '未入力'}</span></div>
     ${it.supplier_code === 'Y' && !st ? '<p class="note" style="margin-top:0">ヤフオクの仕入れは、出品者のインボイス登録番号を記録してください。</p>' : ''}
+    ${['R', 'E', 'K', 'C', 'N'].includes(it.supplier_code) ? '<p class="note" style="margin-top:0">仕入れ先の登録番号を自動で入れています。</p>' : ''}
     <label class="field"><span>出品者（仕入れ先）の名前・ID</span>
       <input type="text" id="inv-seller" value="${esc(it.seller_name || '')}" autocomplete="off"></label>
     <label class="field"><span>インボイス</span>
