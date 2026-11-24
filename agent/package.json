@@ -8,6 +8,7 @@
     "login": "node agent.mjs login",
     "run": "node agent.mjs run",
     "price": "node agent.mjs price",
+    "price-now": "node agent.mjs price --now rakuma,yahoo",
     "check": "node agent.mjs check",
     "test": "node --test test/*.test.mjs"
   },

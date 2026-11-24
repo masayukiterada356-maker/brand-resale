@@ -183,6 +183,18 @@ async function cmdPrice(cfg) {
   if (!release) { log('値下げはもう動いています（2つ目は止めます）'); return; }
   const app = new App(cfg);
   const rules = { ...DEFAULT_RULES, ...(cfg.priceRules || {}) };
+  // 「今すぐ始める」：npm run price -- --now rakuma,yahoo
+  // 指定したフリマは、時間帯を待たずに今から取り戻しとして始める（ヤフーフリマが先）。メルカリは指定できない
+  const nowArg = process.argv.find((a) => a.startsWith('--now'));
+  if (nowArg) {
+    const list = (nowArg.split('=')[1] || process.argv[process.argv.indexOf(nowArg) + 1] || 'rakuma,yahoo').split(',').map((x) => x.trim());
+    for (const k of list) {
+      if (k === 'mercari') { log('メルカリは今すぐの値下げはできません（時間帯 21:00〜22:00 だけ）'); continue; }
+      if (rules[k]) rules[k] = { ...rules[k], start: '00:00', end: '00:01', catchUp: true };
+    }
+    cfg.platforms = cfg.platforms.filter((k) => list.includes(k) && k !== 'mercari');
+    log(`今すぐ始めます：${cfg.platforms.join('・')}`);
+  }
   const dayEnd = at(cfg.priceDayEnd || '23:59');
   const keys = cfg.platforms.filter((k) => rules[k] && SITES[k]?.dropPrice);
   const st = Object.fromEntries(keys.map((k) => [k, { queue: null, remaining: null, deadline: 0, due: 0, listed: false, catchUpFrom: 0 }]));
