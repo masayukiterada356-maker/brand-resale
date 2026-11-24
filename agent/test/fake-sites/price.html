@@ -16,20 +16,22 @@ const DATA = {
 };
 const KEY = 'fake-prices';
 const prices = JSON.parse(localStorage.getItem(KEY) || '{}');
+const stopped = JSON.parse(localStorage.getItem('fake-stopped') || '[]');
 const price = (id, d) => prices[id] ?? d;
 const link = { 'jp.mercari.com': (id) => `/item/${id}`, 'fril.jp': (id) => `https://item.fril.jp/${id}`, 'paypayfleamarket.yahoo.co.jp': (id) => `/item/${id}` };
 const m = document.getElementById('m');
 const all = Object.values(DATA).flat();
 if (/\/mypage\/listings|^\/sell$|\/my\/selling/.test(P)) {
-  m.innerHTML = '<h1>出品中</h1>' + (DATA[H] || []).map(([id, t, p]) => `<div class="card"><a href="${link[H](id)}"><div>${t}</div><div>¥${price(id, p).toLocaleString()}</div></a></div>`).join('');
+  m.innerHTML = '<h1>出品中</h1>' + (DATA[H] || []).filter(([id]) => !stopped.includes(id)).map(([id, t, p]) => `<div class="card"><a href="${link[H](id)}"><div>${t}</div><div>¥${price(id, p).toLocaleString()}</div></a></div>`).join('');
 } else if (/\/sell\/edit\/|\/item\/[^/]+\/edit|\/item\/edit/.test(P)) {
   const id = (/(m\d+|[0-9a-f]{16,}|z\d+)/.exec(P) || [])[1];
   const row = all.find((r) => r[0] === id);
   const name = H === 'jp.mercari.com' ? 'name="price"' : H === 'fril.jp' ? 'name="sellPrice"' : 'type="tel"';
   m.innerHTML = `<h1>商品の編集 ${id}</h1><label>販売価格<input ${name} id="pr" value="${price(id, row[2])}"></label>
-    <button id="del">削除する</button> <button id="stop">出品を一時停止する</button> <button id="save">変更する</button>`;
+    <button id="del">削除する</button> <button id="stop">${H === 'fril.jp' ? '下書きに戻す' : H === 'jp.mercari.com' ? '出品を一時停止する' : '出品を停止する'}</button> <button id="save">変更する</button>`;
   del.onclick = () => fetch('/__save', { method: 'POST', body: JSON.stringify({ ERROR: '削除が押された' }) });
-  stop.onclick = () => fetch('/__save', { method: 'POST', body: JSON.stringify({ ERROR: '停止が押された' }) });
+  stop.onclick = async () => { stopped.push(id); localStorage.setItem('fake-stopped', JSON.stringify(stopped));
+    await fetch('/__save', { method: 'POST', body: JSON.stringify({ stopped: id }) }); m.innerHTML = '<p>止めました</p>'; };
   save.onclick = async () => { prices[id] = Number(pr.value); localStorage.setItem(KEY, JSON.stringify(prices));
     await fetch('/__save', { method: 'POST', body: JSON.stringify({ id, price: Number(pr.value) }) }); m.innerHTML = '<p>変更しました</p>'; };
 } else if (/\/item\/z\d+/.test(P)) {

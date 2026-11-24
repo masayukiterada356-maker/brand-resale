@@ -112,3 +112,9 @@ export function dropPrice(page, item) {
     saveTexts: ['変更する', '更新する'],
   }, item);
 }
+
+// 要確認：編集画面の「出品を一時停止する」
+import { stopListing } from './price-common.mjs';
+export function stop(page, item) {
+  return stopListing(page, { editUrl: `https://jp.mercari.com/sell/edit/${item.external_id}`, stopTexts: ['出品を一時停止する', '出品を一時停止'] }, item);
+}

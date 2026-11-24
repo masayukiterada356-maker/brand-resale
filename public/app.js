@@ -53,6 +53,7 @@ async function viewItems() {
       <div class="stat"><div class="k">在庫数</div><div class="v" id="s-count">…</div></div>
       <div class="stat"><div class="k">在庫の仕入れ値合計</div><div class="v" id="s-cost">…</div></div>
     </div>
+    <div id="stop-banner"></div>
     <div id="inbox-banner"></div>
     <div id="price-banner"></div>
     <div class="seg" id="views">${Object.entries(VIEWS).map(([k, v]) => `<button data-v="${k}" class="${k === listView ? 'on' : ''}">${v}</button>`).join('')}</div>
@@ -71,6 +72,11 @@ async function viewItems() {
     timer = setTimeout(() => { searchText = $q.value; loadList(); }, 250);
   });
   await loadList();
+  api('/api/stops').then((d) => {
+    const $b = document.getElementById('stop-banner');
+    const n = new Set(d.tasks.map((t) => t.item_id)).size;
+    if ($b && d.tasks.length) $b.innerHTML = `<a class="card banner danger" href="#/stops"><b>止める出品が ${d.tasks.length}件</b>（売れた商品 ${n}点）。ほかのフリマで止めてください</a>`;
+  }).catch(() => {});
   api('/api/prices').then((d) => {
     const $b = document.getElementById('price-banner');
     if (!$b || !(d.counts?.linked || d.counts?.unlinked)) return;
@@ -555,6 +561,38 @@ async function loadInbox() {
   $l.querySelectorAll('[data-ignore]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/sales/inbox/${b.dataset.ignore}`, { method: 'POST', body: JSON.stringify({ ignore: true }) });
     loadInbox();
+  }));
+}
+
+/* ---------- 止める出品（売れた商品の、ほかのフリマ） ---------- */
+async function viewStops() {
+  setHeader('止める出品', 'items', true);
+  $view.innerHTML = '<div class="empty">読み込み中…</div>';
+  const d = await api('/api/stops');
+  if (!d.tasks.length) { $view.innerHTML = '<div class="empty">止める出品はありません</div>'; return; }
+  const groups = [];
+  for (const t of d.tasks) {
+    const g = groups.find((x) => x.item_id === t.item_id);
+    if (g) g.list.push(t); else groups.push({ item_id: t.item_id, head: t, list: [t] });
+  }
+  const how = { 'メルカリ': '出品を一時停止', 'ヤフーフリマ': '出品を停止', 'ラクマ': '下書きに戻す' };
+  $view.innerHTML = `<p class="note">売れた商品が、ほかのフリマで出品中のままになっていないか確かめて止めてください。止めたら「止めた」を押します。PCを起動した時にも、止め忘れを自動で確かめます。</p>
+    ${groups.map((g) => `
+    <div class="card stop-card">
+      <div class="ai-head"><span class="chip conflict">${esc(g.head.sold_platform || '')}で売れました</span><span class="note">${esc(g.head.sold_date || '')}</span></div>
+      <a href="#/item/${g.item_id}" class="mgmt" style="font-size:16px;color:inherit">${esc(g.head.mgmt_no)}</a>
+      <div><span class="brand">${esc(g.head.brand || '')}</span> <span class="nm" style="display:inline">${esc(g.head.name || '')}</span></div>
+      ${g.list.map((t) => `
+        <div class="drow" style="grid-template-columns:1fr auto auto">
+          <div><b>${esc(t.platform)}</b>：${how[t.platform] || '止める'}${t.message ? `<div class="dmsg warn">${esc(t.message)}</div>` : ''}</div>
+          ${t.url ? `<a class="linkbtn" href="${esc(t.url)}" target="_blank" rel="noopener">開く</a>` : '<span class="note">出品IDなし</span>'}
+          <span style="display:flex;gap:4px"><button class="chip-btn" data-done="${t.id}">止めた</button><button class="chip-btn" data-none="${t.id}">出品なし</button></span>
+        </div>`).join('')}
+    </div>`).join('')}`;
+  $view.querySelectorAll('[data-done], [data-none]').forEach((b) => b.addEventListener('click', async () => {
+    await api(`/api/stops/${b.dataset.done || b.dataset.none}`, { method: 'POST', body: JSON.stringify({ action: b.dataset.done ? 'done' : 'not_listed' }) });
+    toast(b.dataset.done ? '止めたと記録しました' : '出品していなかったと記録しました');
+    viewStops();
   }));
 }
 
@@ -1265,6 +1303,7 @@ function route() {
   if (h.startsWith('#/settings')) return viewSettings();
   if (h === '#/sold-inbox') return viewSoldInbox();
   if (h === '#/prices') return viewPrices();
+  if (h === '#/stops') return viewStops();
   const pm = /^#\/photos\/([\w-]+)$/.exec(h);
   if (pm) return viewFolder(pm[1]);
   if (h === '#/photos') return viewPhotos();

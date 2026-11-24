@@ -42,6 +42,14 @@ export class App {
     })).json();
   }
 
+  async stopTasks() { return (await (await this.req('/api/agent/stops')).json()).tasks; }
+
+  async stopResult(body) {
+    await this.req('/api/agent/stop-result', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+  }
+
   async pricePlan(limit, platform) {
     const q = new URLSearchParams({ limit: String(limit) });
     if (platform) q.set('platform', platform);

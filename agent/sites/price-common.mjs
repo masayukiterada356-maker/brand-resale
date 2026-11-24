@@ -69,3 +69,30 @@ export async function changePrice(page, { editUrl, openEdit, priceSelectors, sav
   if (ok && (await ok.isVisible().catch(() => false))) { await ok.click().catch(() => {}); await sleep(2500); }
   return { status: 'done' };
 }
+
+// 出品を止める（メルカリ・ヤフーフリマは停止、ラクマは下書きに戻す）
+// 「削除」は絶対に押さない。押す前にボタンの文字を確かめる
+export async function stopListing(page, { editUrl, openEdit, stopTexts }, item) {
+  if (editUrl) await page.goto(editUrl, { waitUntil: 'domcontentloaded' });
+  else await openEdit(page, item);
+  await pause(2000, 3500);
+  let btn = null;
+  for (const t of stopTexts) { btn = await byText(page, 'button, a, input[type=submit]', t, { exact: false }); if (btn) break; }
+  if (!btn) throw new StepError('停止', `「${stopTexts.join('」「')}」のボタンが見つかりません（もう止まっている可能性があります）`);
+  const label = ((await btn.innerText().catch(() => '')) || (await btn.getAttribute('value')) || '').trim();
+  if (/削除/.test(label)) throw new StepError('停止', `押そうとしたボタンが削除です（${label}）。押しません`);
+  await btn.scrollIntoViewIfNeeded();
+  await pause(500, 1000);
+  await btn.click();
+  await sleep(2500);
+  // 確認の画面（「停止する」「OK」など）
+  for (const t of ['停止する', '下書きに戻す', 'OK', 'はい']) {
+    const ok = await byText(page, '[role="dialog"] button, button', t);
+    if (ok && (await ok.isVisible().catch(() => false))) {
+      const l = (await ok.innerText().catch(() => '')).trim();
+      if (!/削除/.test(l)) { await ok.click().catch(() => {}); await sleep(2500); }
+      break;
+    }
+  }
+  return { status: 'stopped', label };
+}

@@ -113,3 +113,18 @@ export function dropPrice(page, item) {
     saveTexts: ['変更する', '更新する', '保存する'],
   }, item);
 }
+
+// 要確認：商品ページの「編集」→「出品を停止する」
+import { stopListing } from './price-common.mjs';
+export function stop(page, item) {
+  return stopListing(page, {
+    openEdit: async (p, it) => {
+      await p.goto(`https://paypayfleamarket.yahoo.co.jp/item/${it.external_id}`, { waitUntil: 'domcontentloaded' });
+      await pause(2000, 3000);
+      const edit = await byText(p, 'a, button', '編集する', { exact: false }) || await byText(p, 'a, button', '商品の編集', { exact: false });
+      if (!edit) throw new StepError('編集', '商品ページに「編集」が見つかりません');
+      await edit.click();
+    },
+    stopTexts: ['出品を停止する', '出品を停止', '公開を停止'],
+  }, item);
+}

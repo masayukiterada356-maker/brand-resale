@@ -1,3 +1,4 @@
+import { createStopTasks, removeStopTasks } from './stops.js';
 import { parseSoldMail } from './mail-parsers.js';
 import { findItem } from './match.js';
 
@@ -84,6 +85,8 @@ export async function recordSale(env, itemId, b) {
         [b.ship_type ? `発送：${b.ship_type}` : '', String(b.memo || '').slice(0, 500)].filter(Boolean).join(' / ') || null),
     env.DB.prepare("UPDATE items SET status = 'sold', sold_date = ?, updated_at = datetime('now') WHERE id = ?").bind(soldDate, itemId),
   ]);
+  // ほかのフリマの出品を止める作業を作る（友人・お店など、フリマ以外で売れた時も3つとも）
+  await createStopTasks(env, itemId, platform);
   return { ok: true, ...c, days };
 }
 
@@ -192,6 +195,7 @@ async function eventAction(id, req, env) {
 
 // 間違えた時に「売れた」を取り消す
 async function undoSold(itemId, env) {
+  await removeStopTasks(env, itemId);
   const item = await env.DB.prepare('SELECT listed_date, legacy_row FROM items WHERE id = ?').bind(itemId).first();
   if (!item) return fail('商品が見つかりません', 404);
   await env.DB.batch([

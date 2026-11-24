@@ -117,3 +117,9 @@ export function dropPrice(page, item) {
     saveTexts: ['変更する', '更新する', '保存する'],
   }, item);
 }
+
+// 要確認：編集画面の「下書きに戻す」
+import { stopListing } from './price-common.mjs';
+export function stop(page, item) {
+  return stopListing(page, { editUrl: `https://fril.jp/item/${item.external_id}/edit`, stopTexts: ['下書きに戻す'] }, item);
+}

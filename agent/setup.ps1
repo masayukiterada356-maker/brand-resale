@@ -27,6 +27,9 @@ Write-Host "タスクスケジューラーに「フリマ下書き作成」（�
 # PCが動いていなかった日のために、ログインした時にも開始する（遅れたラクマ・ヤフーフリマを取り戻す）
 $bat2 = Join-Path $PSScriptRoot "run-price.bat"
 schtasks /Create /F /TN "フリマ値下げ" /SC DAILY /ST 19:00 /TR "`"$bat2`"" | Out-Null
-schtasks /Create /F /TN "フリマ値下げ（起動時）" /SC ONLOGON /DELAY 0003:00 /TR "`"$bat2`"" | Out-Null
-Write-Host "タスクスケジューラーに「フリマ値下げ」（毎晩19:00〜23:59）と「フリマ値下げ（起動時）」を登録しました。"
+# PCにログインした時：止め忘れのチェック → 値下げの取り戻し
+$bat3 = Join-Path $PSScriptRoot "run-startup.bat"
+schtasks /Delete /F /TN "フリマ値下げ（起動時）" 2>$null | Out-Null
+schtasks /Create /F /TN "フリマ起動時チェック" /SC ONLOGON /DELAY 0003:00 /TR "`"$bat3`"" | Out-Null
+Write-Host "タスクスケジューラーに「フリマ値下げ」（毎晩19:00〜23:59）と「フリマ起動時チェック」（止め忘れ・値下げの取り戻し）を登録しました。"
 Write-Host "次に「npm run login」で3つのフリマにログインしてください。"

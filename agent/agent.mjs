@@ -2,7 +2,8 @@
 //   npm run login … 専用のChromeを開く。3つのフリマに1回だけログインしておく
 //   npm run check … アプリにつながるか、ログインできているかを確かめる
 //   npm run run   … 「出品文OK」の商品の下書きを作る（タスクスケジューラーから毎晩）
-//   npm run price … 毎晩の値下げ（21時〜22時。タスクスケジューラーから毎晩21時）
+//   npm run price … 毎晩の値下げ（ラクマ19時・メルカリ21時・ヤフーフリマ22時。タスクスケジューラーから毎晩19時）
+//   npm run check-stops … 止め忘れのチェック（PCを起動した時）：売れた商品がまだ出品中なら止める
 //
 // 絶対にしないこと：「出品する」「公開」ボタンを押すこと。下書き保存だけ。
 
@@ -296,6 +297,57 @@ async function cmdPrice(cfg) {
   }
 }
 
+// 止め忘れのチェック：3つのフリマの出品中の一覧を読み、アプリで「売れた」の商品が残っていれば止める
+async function cmdCheckStops(cfg) {
+  const release = await takeLock();
+  if (!release) { log('ほかの作業が動いているので、止め忘れのチェックはあとにします'); return; }
+  const app = new App(cfg);
+  const ctx = await openBrowser(cfg);
+  const page = ctx.pages()[0] || await ctx.newPage();
+  let stopped = 0;
+  let failed = 0;
+  try {
+    for (const key of cfg.platforms) {
+      const site = SITES[key];
+      if (!site?.listListings || !site.stop) continue;
+      try {
+        const listings = await site.listListings(page);
+        await ensureLoggedIn(page, site);
+        const r = await app.sendListings(site.PLATFORM, listings, listings.length > 0);
+        log(`${site.name}：出品中 ${r.received}件・止め忘れ ${r.stale.length}件`);
+      } catch (e) {
+        log(`${site.name}：一覧を読めませんでした ${e.message}`);
+        await screenshot(page, `stopcheck_${key}`);
+        if (e instanceof LoginError) throw e;
+      }
+      await sleep(2000 + Math.random() * 2000);
+    }
+    // 止める作業（売れた時に作られたもの＋今の止め忘れ）を順に止める
+    const tasks = await app.stopTasks();
+    for (const t of tasks) {
+      const site = BY_PLATFORM[t.platform];
+      if (!site?.stop || !cfg.platforms.includes(Object.keys(SITES).find((k) => SITES[k] === site))) continue;
+      try {
+        await site.stop(page, t);
+        log(`  ${t.mgmt_no} ${t.platform}：止めました`);
+        await app.stopResult({ platform: t.platform, external_id: t.external_id, ok: true, message: 'PCが止めた' });
+        stopped++;
+      } catch (e) {
+        const shot = await screenshot(page, `stop_${t.mgmt_no}_${t.platform}`);
+        log(`  ${t.mgmt_no} ${t.platform}：止められませんでした ${e.message}（${shot}）`);
+        await app.stopResult({ platform: t.platform, external_id: t.external_id, ok: false, message: e.message }).catch(() => {});
+        failed++;
+        if (e instanceof LoginError) throw e;
+      }
+      await sleep(4000 + Math.random() * 4000);
+    }
+  } finally {
+    await ctx.close();
+    await release();
+  }
+  log(`止め忘れのチェックが終わりました（止めた ${stopped}件・止められなかった ${failed}件）`);
+}
+
 async function ensureLoggedIn(page, site) {
   if (/login|signin|accounts\.rakuten|login\.yahoo/.test(page.url())) {
     throw new LoginError(`${site.name}のログインが切れています。「npm run login」でログインし直してください`);
@@ -308,6 +360,7 @@ try {
   if (cmd === 'login') await cmdLogin(cfg);
   else if (cmd === 'check') await cmdCheck(cfg);
   else if (cmd === 'price') await cmdPrice(cfg);
+  else if (cmd === 'check-stops') await cmdCheckStops(cfg);
   else await cmdRun(cfg);
 } catch (e) {
   log('止まりました：', e.message);

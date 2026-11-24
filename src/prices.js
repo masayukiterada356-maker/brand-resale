@@ -5,6 +5,7 @@
 
 import { breakEven } from './sales.js';
 import { score } from './match.js';
+import { staleListings } from './stops.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -71,7 +72,9 @@ async function receiveListings(req, env) {
     await env.DB.prepare(`UPDATE platform_listings SET status = 'gone' WHERE platform = ? AND status = 'active'
         AND external_id NOT IN (${ids.map(() => '?').join(',')})`).bind(platform, ...ids).run();
   }
-  return json({ ok: true, received: seen.size, linked, unlinked });
+  // 売れた商品がまだ出品中なら、止める作業にして返す（PCの止め忘れチェック）
+  const stale = await staleListings(env, platform, [...seen]);
+  return json({ ok: true, received: seen.size, linked, unlinked, stale });
 }
 
 // 1日に値下げする件数（フリマごと）
