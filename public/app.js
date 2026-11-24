@@ -1197,6 +1197,11 @@ async function viewSettings() {
         <input type="password" id="gm-key" class="num" autocomplete="off"></label>
       <button class="btn ghost" id="gm-save">鍵を保存</button>
       ${c.has_gemini ? `<p class="note">使うモデル：${esc(c.gemini_model || '')}</p><button class="btn ghost" id="gm-probe">Geminiを試す</button><div id="gm-probe-out" class="note"></div>` : ''}
+    </div>
+    <div class="card">
+      <h2>自宅PCのプログラム</h2>
+      <p class="note" style="margin-top:0">下書き作成・毎晩の値下げをするPCのプログラムの設定ファイルです。<b>PCで</b>ダウンロードして、プログラムのフォルダ（C:\\flea-agent）に入れてください。中にPCとアプリをつなぐ合言葉が入っているので、人に渡さないでください。</p>
+      <a class="btn ghost" style="text-align:center;text-decoration:none" href="/api/agent-config" download="config.json">config.json をダウンロード</a>
     </div>`
     + `
     <div class="card">

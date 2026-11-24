@@ -166,6 +166,26 @@ export async function handleConfig(req, env, url) {
   if (p === '/api/google/connect' && req.method === 'GET') return connect(env, url);
   if (p === '/api/google/callback' && req.method === 'GET') return callback(env, req, url);
   if (p === '/api/google/disconnect' && req.method === 'POST') return disconnect(env);
+  // 自宅PCのプログラム用の設定ファイル（合言葉入り）をダウンロード
+  if (p === '/api/agent-config' && req.method === 'GET') {
+    if (!env.AGENT_TOKEN) return fail('合言葉（AGENT_TOKEN）がまだ設定されていません');
+    const cfg = {
+      appUrl: url.origin,
+      agentToken: env.AGENT_TOKEN,
+      profileDir: 'C:\\flea-agent\\chrome-profile',
+      maxItemsPerRun: 5,
+      platforms: ['mercari', 'rakuma', 'yahoo'],
+      waitBetweenItemsSec: [60, 180],
+      priceDayEnd: '23:59',
+    };
+    return new Response(JSON.stringify(cfg, null, 2), {
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'content-disposition': 'attachment; filename="config.json"',
+        'cache-control': 'no-store',
+      },
+    });
+  }
   if (p === '/api/gemini/probe' && req.method === 'POST') {
     if (!env.GEMINI_API_KEY) return fail('Geminiの鍵がまだです');
     try { return json({ results: await probeGemini(env) }); } catch (e) { return fail(e.message, 502); }
