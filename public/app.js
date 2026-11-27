@@ -1238,6 +1238,12 @@ async function viewSettings() {
       ${c.has_gemini ? `<p class="note">使うモデル：${esc(c.gemini_model || '')}</p><button class="btn ghost" id="gm-probe">Geminiを試す</button><div id="gm-probe-out" class="note"></div>` : ''}
     </div>
     <div class="card">
+      <h2>売れた時の通知</h2>
+      <p class="note" style="margin-top:0">売れた時にiPhoneに通知が届き、ホーム画面のアイコンに「対応が必要な売れた商品」の数が出ます（ほかのフリマで止めると減ります）。ホーム画面のアイコンから開いて押してください。</p>
+      <button class="btn ghost" id="push-on">${'Notification' in window && Notification.permission === 'granted' ? '通知を受け取る（設定済み・もう一度登録）' : '通知を受け取る'}</button>
+      <button class="btn ghost" id="push-test" style="margin-top:8px">テスト通知を送る</button>
+    </div>
+    <div class="card">
       <h2>自宅PCのプログラム</h2>
       <p class="note" style="margin-top:0">下書き作成・毎晩の値下げをするPCのプログラムの設定ファイルです。<b>PCで</b>ダウンロードして、プログラムのフォルダ（C:\\flea-agent）に入れてください。中にPCとアプリをつなぐ合言葉が入っているので、人に渡さないでください。</p>
       <a class="btn ghost" style="text-align:center;text-decoration:none" href="/api/agent-config" download="config.json">config.json をダウンロード</a>
@@ -1251,6 +1257,15 @@ async function viewSettings() {
       <p class="note">変えると、ほかの端末ではログインし直しになります。</p>
     </div>
     <button class="btn ghost" id="logout">ログアウト</button>`;
+  document.getElementById('push-on').addEventListener('click', async () => {
+    try { await enablePush(); toast('通知を受け取れるようにしました'); } catch (e) { toast(e.message); }
+  });
+  document.getElementById('push-test').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/push/test', { method: 'POST' });
+      toast(r.skipped || (r.devices ? `${r.devices}台に送りました（届くまで数秒〜1分）` : '通知を受け取る端末がまだありません。先に「通知を受け取る」を押してください'));
+    } catch (e) { toast(e.message); }
+  });
   document.getElementById('g-save').addEventListener('click', async () => {
     try {
       await api('/api/config', { method: 'PUT', body: JSON.stringify({ google_client_id: document.getElementById('g-id').value, google_client_secret: document.getElementById('g-secret').value }) });
@@ -1310,6 +1325,35 @@ function route() {
   if (h === '#/photos') return viewPhotos();
   return viewItems();
 }
-window.addEventListener('hashchange', () => { route(); refreshBadge(); });
+window.addEventListener('hashchange', () => { route(); refreshBadge(); updateAppBadge(); });
 route();
 refreshBadge();
+
+/* ---------- ホーム画面のアイコンの数字（バッジ）と通知 ---------- */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+async function updateAppBadge() {
+  if (!('setAppBadge' in navigator)) return;
+  try {
+    const s = await api('/api/push/status');
+    if (s.count > 0) await navigator.setAppBadge(s.count); else await navigator.clearAppBadge();
+  } catch { /* ログイン前など */ }
+}
+updateAppBadge();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') updateAppBadge(); });
+
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64.length + 3) % 4)), (c) => c.charCodeAt(0));
+
+async function enablePush() {
+  const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+  if (!standalone && /iPhone|iPad/.test(navigator.userAgent)) throw new Error('ホーム画面に追加したアイコンから開いたアプリで押してください（Safari・Chromeの画面のままでは通知を受け取れません）');
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('このiPhoneは通知に対応していません（iOS 16.4以降が必要です）');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('通知が許可されませんでした。iPhoneの「設定」→「通知」→「在庫管理」で許可してください');
+  const reg = await navigator.serviceWorker.ready;
+  const { key } = await api('/api/push/key');
+  if (!key) throw new Error('通知の準備（鍵）がまだです');
+  const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+  await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) });
+  updateAppBadge();
+}

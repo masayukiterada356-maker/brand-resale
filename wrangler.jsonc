@@ -27,7 +27,9 @@
     // この日以降に作られた日付フォルダだけ取り込む（それより前の写真は今のやり方で出品済みのため）
     "PHOTO_SYNC_FROM": "2026-11-01",
     // 売れた通知メールに付けるGmailのラベル
-    "GMAIL_LABEL": "フリマ売れた"
+    "GMAIL_LABEL": "フリマ売れた",
+    // 通知（Web Push）の公開鍵。秘密鍵は Workerのシークレット VAPID_PRIVATE_JWK
+    "VAPID_PUBLIC": "BLknDdQvA-V9FQeksLnybyemyIPEJKrD-4dTJVnja0zTvsFzdf9fOjmLqNPyzHx7rfXAY_XbHv75jw2PLAEtU2w"
   },
   // 15分ごとに、Gmail（売れた通知）とドライブ（写真）を確認
   "triggers": { "crons": ["*/15 * * * *"] }

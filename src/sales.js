@@ -1,4 +1,5 @@
 import { createStopTasks, removeStopTasks } from './stops.js';
+import { notifyAll } from './push.js';
 import { parseSoldMail } from './mail-parsers.js';
 import { findItem } from './match.js';
 
@@ -140,8 +141,10 @@ export async function handleSoldNotice(env, parsed, { source, message_id = null,
     .bind(source, message_id, parsed.platform, parsed.external_id, parsed.title, parsed.price, sold_date, JSON.stringify(found.candidates)).first();
   if (found.item_id) {
     const r = await confirmEvent(env, ins.id, found.item_id);
+    await notifyAll(env).catch(() => {});
     return { event_id: ins.id, matched: !r.error, item_id: found.item_id, error: r.error };
   }
+  await notifyAll(env).catch(() => {});
   return { event_id: ins.id, matched: false, candidates: found.candidates };
 }
 
