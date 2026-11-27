@@ -9,6 +9,7 @@
 
 import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -30,20 +31,72 @@ async function loadConfig() {
   return { maxItemsPerRun: 5, platforms: ['mercari', 'rakuma', 'yahoo'], waitBetweenItemsSec: [60, 180], ...cfg };
 }
 
+// Chromeの場所を探す（ふつうに入れたChrome）
+function findChrome(cfg) {
+  const cands = [
+    cfg.chromePath, process.env.AGENT_CHROME_PATH,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ].filter(Boolean);
+  return cands.find((p) => existsSync(p)) || null;
+}
+
+// ブラウザを開く
+// ・ふだん：PCのChromeを「ふつうに」起動して（このプログラム専用のフォルダで）、あとからつなぐ
+//   （プログラム用の特別な起動設定を付けると落ちるChromeがあるため）
+// ・テストの時：AGENT_BROWSER_CHANNEL で、Playwrightの起動方法も選べる
 async function openBrowser(cfg) {
   await mkdir(cfg.profileDir, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(cfg.profileDir, {
-    // PCに入っている本物のChromeを使う（テストの時だけ AGENT_BROWSER_CHANNEL= で付属のChromiumにできる）
-    // config.json の browserChannel（chrome / msedge / chromium）、または環境変数 AGENT_BROWSER_CHANNEL で選べる
-    // chromium＝Playwright付属のブラウザ（npx playwright install chromium で入れる）
-    channel: ((c) => (c === 'chromium' || c === '' ? undefined : c))(process.env.AGENT_BROWSER_CHANNEL ?? cfg.browserChannel ?? 'chrome'),
-    headless: process.env.AGENT_HEADLESS === '1', // ふだんは画面を出して動かす
-    viewport: null,
-    locale: 'ja-JP',
-    args: ['--start-maximized'],
-    ignoreDefaultArgs: ['--enable-automation'],
-  });
+  const channel = process.env.AGENT_BROWSER_CHANNEL ?? cfg.browserChannel ?? 'chrome';
+  if (channel !== 'chrome') {
+    const ctx = await chromium.launchPersistentContext(cfg.profileDir, {
+      channel: channel === 'chromium' || channel === '' ? undefined : channel,
+      headless: process.env.AGENT_HEADLESS === '1',
+      viewport: null, locale: 'ja-JP', args: ['--start-maximized'], ignoreDefaultArgs: ['--enable-automation'],
+    });
+    await useFakeSites(ctx);
+    return ctx;
+  }
+
+  const exe = findChrome(cfg);
+  if (!exe) throw new Error('Chromeが見つかりません。config.json に "chromePath": "chrome.exe の場所" を書いてください');
+  const port = cfg.debugPort || 9333;
+  const child = spawn(exe, [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${cfg.profileDir}`,
+    '--no-first-run', '--no-default-browser-check', '--start-maximized', '--lang=ja',
+    ...(process.env.AGENT_HEADLESS === '1' ? ['--headless=new'] : []),
+    // Linuxの管理者（root）で動かす時だけ必要（テスト用の環境）。WindowsのPCでは付けない
+    ...(process.platform === 'linux' && process.getuid?.() === 0 ? ['--no-sandbox'] : []),
+    'about:blank',
+  ], { stdio: 'ignore', detached: false });
+  const exited = new Promise((r) => child.once('exit', r));
+
+  // Chromeがつなげる状態になるまで待つ（最大30秒）
+  let browser = null;
+  for (let i = 0; i < 60 && !browser; i++) {
+    await sleep(500);
+    if (child.exitCode !== null) {
+      throw new Error(`Chromeがすぐに終了しました（終了コード ${child.exitCode}）。ほかに「このプログラム専用のChrome」が開いていたら閉じてから、もう一度試してください`);
+    }
+    try { browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`); } catch { /* まだ */ }
+  }
+  if (!browser) { child.kill(); throw new Error('Chromeにつなげませんでした'); }
+  const ctx = browser.contexts()[0];
   await useFakeSites(ctx);
+
+  // 終わる時はChromeも閉じる。Chromeを手で閉じた時は ctx の close が起きる
+  const origClose = ctx.close.bind(ctx);
+  ctx.close = async () => {
+    await browser.close().catch(() => {});
+    if (child.exitCode === null) { child.kill(); }
+    await Promise.race([exited, sleep(5000)]);
+    return origClose().catch(() => {});
+  };
+  exited.then(() => ctx.emit?.('close'));
+  ctx.waitForUserClose = () => exited;
   return ctx;
 }
 
@@ -85,7 +138,8 @@ async function cmdLogin(cfg) {
     await p.goto(s.URL).catch(() => {});
   }
   log('3つのフリマのタブを開きました。それぞれログインしてから、Chromeを閉じてください。');
-  await new Promise((r) => ctx.on('close', r));
+  if (ctx.waitForUserClose) await ctx.waitForUserClose();
+  else await new Promise((r) => ctx.on('close', r));
 }
 
 async function cmdCheck(cfg) {
