@@ -34,7 +34,9 @@ async function openBrowser(cfg) {
   await mkdir(cfg.profileDir, { recursive: true });
   const ctx = await chromium.launchPersistentContext(cfg.profileDir, {
     // PCに入っている本物のChromeを使う（テストの時だけ AGENT_BROWSER_CHANNEL= で付属のChromiumにできる）
-    channel: process.env.AGENT_BROWSER_CHANNEL === undefined ? 'chrome' : (process.env.AGENT_BROWSER_CHANNEL || undefined),
+    // config.json の browserChannel（chrome / msedge / chromium）、または環境変数 AGENT_BROWSER_CHANNEL で選べる
+    // chromium＝Playwright付属のブラウザ（npx playwright install chromium で入れる）
+    channel: ((c) => (c === 'chromium' || c === '' ? undefined : c))(process.env.AGENT_BROWSER_CHANNEL ?? cfg.browserChannel ?? 'chrome'),
     headless: process.env.AGENT_HEADLESS === '1', // ふだんは画面を出して動かす
     viewport: null,
     locale: 'ja-JP',
