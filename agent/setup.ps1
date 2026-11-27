@@ -29,7 +29,11 @@ $bat2 = Join-Path $PSScriptRoot "run-price.bat"
 schtasks /Create /F /TN "フリマ値下げ" /SC DAILY /ST 19:00 /TR "`"$bat2`"" | Out-Null
 # PCにログインした時：止め忘れのチェック → 値下げの取り戻し
 $bat3 = Join-Path $PSScriptRoot "run-startup.bat"
-schtasks /Delete /F /TN "フリマ値下げ（起動時）" 2>$null | Out-Null
+# 前の版で作った古い名前のタスクがあれば消す（無くてもエラーで止めない）
+$ErrorActionPreference = "Continue"
+schtasks /Query /TN "フリマ値下げ（起動時）" *> $null
+if ($LASTEXITCODE -eq 0) { schtasks /Delete /F /TN "フリマ値下げ（起動時）" | Out-Null }
+$ErrorActionPreference = "Stop"
 schtasks /Create /F /TN "フリマ起動時チェック" /SC ONLOGON /DELAY 0003:00 /TR "`"$bat3`"" | Out-Null
 Write-Host "タスクスケジューラーに「フリマ値下げ」（毎晩19:00〜23:59）と「フリマ起動時チェック」（止め忘れ・値下げの取り戻し）を登録しました。"
 Write-Host "次に「npm run login」で3つのフリマにログインしてください。"
