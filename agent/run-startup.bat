@@ -1,6 +1,5 @@
 @echo off
-rem PCにログインした時にタスクスケジューラーから呼ぶ
-rem 1. 止め忘れのチェック（売れた商品がまだ出品中なら止める） 2. 値下げの取り戻し（ラクマ・ヤフーフリマ）
+rem Called by Task Scheduler at logon: 1) stop-check for sold items 2) catch up price drops
 cd /d "%~dp0"
 if not exist logs mkdir logs
 node agent.mjs check-stops >> logs\startup.log 2>&1

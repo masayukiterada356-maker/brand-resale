@@ -1,4 +1,4 @@
-# 初回だけ実行する準備（PowerShellで：右クリック →「PowerShellで実行」）
+﻿# 初回だけ実行する準備（PowerShellで：右クリック →「PowerShellで実行」）
 # 1. 必要な部品を入れる  2. 毎晩の自動実行を登録する
 
 $ErrorActionPreference = "Stop"

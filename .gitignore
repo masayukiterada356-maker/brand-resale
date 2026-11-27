@@ -4,3 +4,4 @@ node_modules/
 private/
 public/shared/
 src/static-files.js
+/dist/
